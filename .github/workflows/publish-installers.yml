@@ -1,0 +1,67 @@
+name: Publish verified installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful installer build run ID
+        required: true
+        type: string
+      release_tag:
+        description: Existing release tag
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+      - name: Confirm build and tag use the same source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          build_sha="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BUILD_RUN_ID}" --jq '.head_sha')"
+          test "$(git rev-parse HEAD)" = "$build_sha"
+          test "$(git describe --tags --exact-match HEAD)" = "$RELEASE_TAG"
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BUILD_RUN_ID}" --jq '.conclusion')" = success
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: EllaPuede-*-unsigned-installers
+          merge-multiple: true
+          path: release-assets
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify both platform installers and checksums
+        working-directory: release-assets
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          test -f "EllaPuede-${version}-Windows-x64-Setup.exe"
+          test -f "EllaPuede-${version}-macOS-AppleSilicon.dmg"
+          test -f "EllaPuede-${version}-macOS-AppleSilicon-Installer.pkg"
+          test "$(find . -maxdepth 1 -name '*Setup.exe' | wc -l)" -eq 1
+          test "$(find . -maxdepth 1 -name '*.dmg' | wc -l)" -eq 1
+          test "$(find . -maxdepth 1 -name '*.pkg' | wc -l)" -eq 1
+          for checksum in *.sha256; do sha256sum -c "$checksum"; done
+          sha256sum *Setup.exe *.dmg *.pkg > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Upload to existing draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" release-assets/*Setup.exe release-assets/*.dmg release-assets/*.pkg release-assets/SHA256SUMS.txt --clobber
