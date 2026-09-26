@@ -1,0 +1,43 @@
+{
+  "product": "EllaPuede 字幕提取工具",
+  "version": "0.14.7",
+  "build": 35,
+  "status": "公测",
+  "release_tag": "v0.14.7",
+  "release_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/tag/v0.14.7",
+  "source_commit_public": "ac63744f738cb531e850470896765a082cf67b5c",
+  "ci_run": "https://github.com/joesun16/ellapuede-subtitle-studio/actions/runs/36246568998",
+  "ci_result": "macos-14 and windows-latest both success; Windows Setup.exe silent install, bundled offline OCR and subtitle export, uninstall passed",
+  "release_publish_ci_run": "https://github.com/joesun16/ellapuede-subtitle-studio/actions/runs/36246954434",
+  "asset_origin": "Published only from successful build run 36246568998; publishing workflow checked source SHA, tag and SHA-256 of all installers",
+  "build_environment": "GitHub Actions macos-14 / windows-latest; Python 3.13; PyInstaller 6.17.0; built-in OCR models",
+  "local_validation": "230 source tests passed; same-source Mac DMG installed and Command+Q verified; downloaded CI DMG SHA-256, hdiutil and packaged multilingual OCR/export smoke passed",
+  "sample_performance": "111.688s Thai: Mac Vision 23 cues, 0 <0.18s; Mac proxy of Windows RapidOCR 24 cues, 0 <0.18s; old 11 plate/brand scene cues absent. Latest RapidOCR source warm cache 46.17s, peak 3.9GB; pre-final cold cache 288.62s, peak 3.9GB (different ROI decimals). Neither is Windows real-machine timing.",
+  "files": [
+    {
+      "name": "EllaPuede-0.14.7-Windows-x64-Setup.exe",
+      "bytes": 227588783,
+      "sha256": "85ea59e0aa8a67245f5edee4262cd59b0f8b7eed1dc4a90039731266ad18129b",
+      "download_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.7/EllaPuede-0.14.7-Windows-x64-Setup.exe"
+    },
+    {
+      "name": "EllaPuede-0.14.7-macOS-AppleSilicon.dmg",
+      "bytes": 269894390,
+      "sha256": "beb5c3c1146254fabef135288020b035e9f8fda77f2a50a986334a8a44638fcb",
+      "download_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.7/EllaPuede-0.14.7-macOS-AppleSilicon.dmg"
+    },
+    {
+      "name": "EllaPuede-0.14.7-macOS-AppleSilicon-Installer.pkg",
+      "bytes": 253202827,
+      "sha256": "3ca0b662c1b44cb58ed7a7e1a626874c00bb80f916cca3eff75384e12e942d3d",
+      "download_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.7/EllaPuede-0.14.7-macOS-AppleSilicon-Installer.pkg"
+    }
+  ],
+  "checksum_file_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.7/SHA256SUMS.txt",
+  "limitations": [
+    "No company Developer ID / Authenticode signature or Apple notarization",
+    "No authorized frame-by-frame truth set for all supported languages; spelling errors remain possible",
+    "Windows varied hardware and full-season throughput unverified",
+    "100-minute video in 5–10 minutes not achieved"
+  ]
+}

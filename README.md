@@ -4,7 +4,7 @@
 
 **从视频画面提取已经烧录的对白字幕，按原视频文件名导出 SRT / ASS。**
 
-[下载安装包](https://github.com/joesun16/ellapuede-subtitle-studio/releases/tag/v0.14.7) · [使用指南](docs/USER-GUIDE.md) · [命令行与集成](docs/CLI.md) · [已知限制](docs/QUALITY.md) · [English](#english)
+[下载安装包](https://github.com/joesun16/ellapuede-subtitle-studio/releases/tag/v0.14.7) · [使用指南](docs/USER-GUIDE.md) · [命令行与集成](docs/CLI.md) · [已知限制](docs/QUALITY.md) · [安装包校验](docs/RELEASE-MANIFEST-0.14.7.json) · [English](#english)
 
 > **0.14.7 公测版。** Mac Apple Silicon 与 Windows x64 使用同一版源码，安装包内置运行时与 OCR 模型。安装后处理视频无需联网。现阶段不承诺“100 分钟视频 5–10 分钟完成”或任何语言的零错误识别。
 
