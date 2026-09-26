@@ -6,7 +6,7 @@
 
 [下载安装包](https://github.com/joesun16/ellapuede-subtitle-studio/releases/latest) · [使用指南](docs/USER-GUIDE.md) · [命令行与集成](docs/CLI.md) · [已知限制](docs/QUALITY.md) · [English](#english)
 
-> **0.14.5 公测版。** Mac Apple Silicon 与 Windows x64 使用同一版源码，安装包内置运行时与 OCR 模型。安装后处理视频无需联网。现阶段不承诺“100 分钟视频 5–10 分钟完成”或任何语言的零错误识别。
+> **0.14.6 公测版。** Mac Apple Silicon 与 Windows x64 使用同一版源码，安装包内置运行时与 OCR 模型。安装后处理视频无需联网。现阶段不承诺“100 分钟视频 5–10 分钟完成”或任何语言的零错误识别。
 
 ## 它解决什么问题
 
@@ -25,9 +25,9 @@
 
 | 系统 | 文件 | 安装方式 |
 |---|---|---|
-| Windows x64 | `EllaPuede-0.14.5-Windows-x64-Setup.exe` | 运行安装向导 |
-| macOS Apple Silicon | `EllaPuede-0.14.5-macOS-AppleSilicon.dmg` | 将 App 拖入“应用程序” |
-| macOS Apple Silicon | `EllaPuede-0.14.5-macOS-AppleSilicon-Installer.pkg` | 使用安装向导 |
+| Windows x64 | `EllaPuede-0.14.6-Windows-x64-Setup.exe` | 运行安装向导 |
+| macOS Apple Silicon | `EllaPuede-0.14.6-macOS-AppleSilicon.dmg` | 将 App 拖入“应用程序” |
+| macOS Apple Silicon | `EllaPuede-0.14.6-macOS-AppleSilicon-Installer.pkg` | 使用安装向导 |
 
 本版安装包尚无公司代码签名；Mac 版尚未完成 Apple 公证，Windows 版也可能显示发布者验证提示。详情见 [安装说明](docs/INSTALLATION.md)。Intel Mac 和 Windows ARM 原生安装包尚未提供。
 
@@ -65,4 +65,4 @@ python launch.py
 
 ## English
 
-EllaPuede extracts **existing burned-in dialogue subtitles from video frames** and exports same-basename SRT/ASS files. Select the subtitle region once for a series, choose the source language and output format, then process episodes offline in a batch. It is not speech-to-text, translation, or a promise of error-free OCR. Version 0.14.5 is a beta for macOS Apple Silicon and Windows x64. See the [release](https://github.com/joesun16/ellapuede-subtitle-studio/releases/latest), [user guide](docs/USER-GUIDE.md), and [quality limits](docs/QUALITY.md).
+EllaPuede extracts **existing burned-in dialogue subtitles from video frames** and exports same-basename SRT/ASS files. Select the subtitle region once for a series, choose the source language and output format, then process episodes offline in a batch. It is not speech-to-text, translation, or a promise of error-free OCR. Version 0.14.6 is a beta for macOS Apple Silicon and Windows x64. See the [release](https://github.com/joesun16/ellapuede-subtitle-studio/releases/latest), [user guide](docs/USER-GUIDE.md), and [quality limits](docs/QUALITY.md).

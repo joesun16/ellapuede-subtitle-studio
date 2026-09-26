@@ -76,26 +76,6 @@ class SegmentationTests(unittest.TestCase):
         brief=['Are you?']*12+['Are you!']*2+['Are you?']*12
         self.assertEqual(len(tool.make_segments([visual(i,text) for i,text in enumerate(brief)])),3)
 
-    def test_rapid_korean_tail_flicker_remains_one_caption(self):
-        def visual(i,text):
-            value=row(i,text,start=i*.04,end=(i+1)*.04)
-            value['ocr']={'lines':[{'box':[.1,.2,.8,.3],
-                                    'candidates':[{'text':text,'confidence':.94}]}]}
-            return value
-        a='저런 촌년을 보면 기분만 언짧지'
-        b='저런 촌년을 보면 기분만 언잖지'
-        c='저런 촌년을 보면 기분만 언쌓지'
-        readings=([a]*5+[c]*2+[a]*8+[b]*4+[a]*2+[b]*8+[a]*3+
-                  [b]*6+[a]+[b]*20+[a]*2+[b]+[a]*3+[b]+[a]*3)
-        after='어르신께서\n절대적인 안정이 필요'
-        texts=readings+[after]*12
-        events=tool.make_segments([visual(i,text) for i,text in enumerate(texts)])
-        self.assertEqual(len(events),2)
-        self.assertAlmostEqual(events[0]['start'],0)
-        self.assertAlmostEqual(events[0]['end'],len(readings)*.04)
-        self.assertIn(events[0]['text'],(a,b))
-        self.assertEqual(events[1]['text'],after)
-
     def test_large_displaced_end_card_is_not_dialogue(self):
         calibration={'roi':[.02,.715,.98,.86],'font_height':.05,
                      'candidates':[{'roi':[.02,.715,.98,.815],

@@ -1,0 +1,13 @@
+{
+  "product": "EllaPuede 字幕提取工具",
+  "version": "0.14.6",
+  "build": "34",
+  "release_tag": "v0.14.6",
+  "status": "同源构建与哈希核验中",
+  "platforms": [
+    "macos-arm64",
+    "windows-x64"
+  ],
+  "checks": "本地 214 项回归；Mac 安装包及 Windows CI 安装/运行/卸载以最终记录为准",
+  "files": []
+}

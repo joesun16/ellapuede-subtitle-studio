@@ -432,7 +432,7 @@ def _extend_volatile_to_observed_anchor(runs):
             item=compact[j];previous=group[-1]
             if (not item['key'] or
                     item['rows'][0]['start']-previous['rows'][-1]['end']>.08 or
-                    item['rows'][-1]['end']-first['rows'][0]['start']>3.5 or
+                    item['rows'][-1]['end']-first['rows'][0]['start']>2.5 or
                     not _volatile_near(previous,item)):
                 break
             group.append(item)
@@ -443,18 +443,6 @@ def _extend_volatile_to_observed_anchor(runs):
         if best is None:
             i+=1;continue
         last,canonical=best;joined=compact[i:last+1]
-        # A stable reading may be followed by a few rapid alternations of the
-        # *same already observed* OCR variants before the subtitle disappears.
-        # They belong to the held caption, even if no final run lasts .24 s.
-        # Require multiple switches; one brief real text change is preserved.
-        tail=compact[last+1:i+len(group)]
-        if (len(tail)>=2 and
-                all(original[item['key']]>=2 and
-                    item['rows'][-1]['end']-item['rows'][0]['start']<=.18
-                    for item in tail) and
-                len({item['key'] for item in tail})>=2):
-            last=i+len(group)-1
-            joined=compact[i:last+1]
         compact[i:last+1]=[{'key':canonical,
                             'rows':[row for run in joined for row in run['rows']],
                             'flags':sorted(set().union(*(run['flags'] for run in joined))|

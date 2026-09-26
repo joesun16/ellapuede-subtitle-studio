@@ -1,4 +1,4 @@
-"""Render the nine EllaPuede 0.14.5 WeChat Moments cards.
+"""Render the nine EllaPuede 0.14.6 WeChat Moments cards.
 
 Run on macOS with Pillow and OpenCV installed. The exported PNGs are the
 portable deliverables; this source remains editable for future releases.
@@ -14,7 +14,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent
-OUT = ROOT / "moments-0.14.5"
+OUT = ROOT / "moments-0.14.6"
 OUT.mkdir(parents=True, exist_ok=True)
 S = 2
 W = H = 1080
@@ -134,7 +134,7 @@ def card1():
     roundrect(d, (741, 599, 991, 814), 23, "#F2FBF4")
     text(d, 776, 632, "第01集", 31, INK, True)
     text(d, 776, 707, ".srt", 58, GREEN, True, True)
-    pill(d, 80, 916, "0.14.5 开源公测", "#D7EBDD", DEEP, size=22)
+    pill(d, 80, 916, "0.14.6 开源公测", "#D7EBDD", DEEP, size=22)
     footer(d, 1, True)
     return im
 
@@ -213,7 +213,7 @@ def card5():
     center_text(d, 540, 510, "EllaPuede", 76, DEEP, True, True)
     center_text(d, 540, 616, "字幕提取工具", 58, GREEN, True)
     line(d, [(386, 722), (694, 722)], "#A9CDB7", 2)
-    center_text(d, 540, 759, "0.14.5  ·  开源公测", 27, MUTED, True)
+    center_text(d, 540, 759, "0.14.6  ·  开源公测", 27, MUTED, True)
     footer(d, 5, True)
     return im
 
@@ -284,7 +284,7 @@ def card9():
     text(d, 112, 560, "GitHub 下载", 38, GREEN, True)
     text(d, 112, 633, "github.com/joesun16/", 28, INK, False, True)
     text(d, 112, 681, "ellapuede-subtitle-studio", 26, INK, True, True)
-    text(d, 112, 773, "0.14.5 公测版", 26, MUTED, True)
+    text(d, 112, 773, "0.14.6 公测版", 26, MUTED, True)
     text(d, 112, 814, "请按系统选择安装包", 26, MUTED)
     qr = cv2.QRCodeEncoder_create().encode(URL)
     qr_im = Image.fromarray(qr).convert("L")
@@ -303,7 +303,7 @@ def github_cover():
     icon = icon.resize((168 * S, 168 * S), Image.Resampling.LANCZOS)
     im.paste(icon, xy((88, 166)), icon)
     d = ImageDraw.Draw(im)
-    pill(d, 307, 80, "OPEN SOURCE  ·  0.14.5 BETA", "#CFE9DA", DEEP, size=23)
+    pill(d, 307, 80, "OPEN SOURCE  ·  0.14.6 BETA", "#CFE9DA", DEEP, size=23)
     text(d, 305, 177, "EllaPuede", 86, WHITE, True, True)
     text(d, 311, 306, "从画面对白，到同名字幕文件。", 43, "#D6EEE0", True)
     for x, label in ((310, "整剧共用区域"), (546, "离线 OCR"), (742, "SRT / ASS")):
