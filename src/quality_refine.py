@@ -105,7 +105,7 @@ def retry_blank(pool,crop):
     text,_=core.read_lines(pool.recognize(core.image_crop(mask,(0,0,1,1),2)))
     return None if text else ('',1.)
 
-def refine(rows,path,meta,roi,pool,scale,workers=2):
+def refine(rows,path,meta,roi,pool,scale,workers=2,skip_indices=()):
     import av
     import subtitle_ocr as core
     from video_crops import FrameCropper
@@ -113,7 +113,9 @@ def refine(rows,path,meta,roi,pool,scale,workers=2):
     if getattr(pool,'languages',[])==['ko-KR']:
         from spacing_refine import refine as refine_spacing
         spacing_repairs=refine_spacing(rows,path,meta,roi)
-    candidates=set(unstable_frames(rows));original=[r['text'] for r in rows];references={};allowed={}
+    skip_indices=set(skip_indices)
+    candidates=set(unstable_frames(rows))-skip_indices
+    original=[r['text'] for r in rows];references={};allowed={}
     if getattr(pool,'languages',[])==['ko-KR']:
         i=1
         while i<len(rows)-1:
@@ -121,7 +123,9 @@ def refine(rows,path,meta,roi,pool,scale,workers=2):
             end=i
             while end+1<len(rows) and original[end+1]:end+=1
             if end+1<len(rows) and rows[end]['end']-rows[i]['start']<=.081:
-                for j in range(i,end+1):references[j]={'text':'','ocr':{'lines':[]}};allowed[j]={''}
+                for j in range(i,end+1):
+                    if j not in skip_indices:
+                        references[j]={'text':'','ocr':{'lines':[]}};allowed[j]={''}
             i=end+1
     for i in candidates:
         indexes=range(max(0,i-20),min(len(rows),i+21));counts=Counter(original[j] for j in indexes if j!=i and original[j] and original[j]!=original[i] and (not original[i] or related_readings(original[i],original[j])))
@@ -142,7 +146,7 @@ def refine(rows,path,meta,roi,pool,scale,workers=2):
     if not references:return spacing_repairs
     repaired=spacing_repairs;done=0;pending=deque();last=max(references)
     core.control.emit('phase',phase=f'自动核验 {len(references)} 个可疑画面')
-    core.control.emit('verify_progress',done=0,total=len(references))
+    core.control.emit('verify_progress',done=0,total=len(references),base=.8,span=.10)
     def accept():
         nonlocal repaired,done
         i,future=pending.popleft();result=future.result();row=rows[i]
@@ -150,7 +154,7 @@ def refine(rows,path,meta,roi,pool,scale,workers=2):
             text,confidence=result;row['primary_text']=row['text'];row['text']=text;row['confidence']=confidence;row['image_verified']=True;repaired+=1
         done+=1
         if done%16==0 or done==len(references):
-            core.control.emit('verify_progress',done=done,total=len(references))
+            core.control.emit('verify_progress',done=done,total=len(references),base=.8,span=.10)
     with ExitStack() as stack:
         cropper=FrameCropper(roi)
         # Independent English OCR is used only on unstable Apple Vision frames.

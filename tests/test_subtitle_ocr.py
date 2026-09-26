@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from fractions import Fraction
+from unittest.mock import patch
 
 import subtitle_ocr as tool
 
@@ -19,6 +20,93 @@ class SegmentationTests(unittest.TestCase):
         self.assertEqual(tool.select_scale(0,544,'rapid',['th-TH']),2)
         self.assertEqual(tool.select_scale(0,544,'vision',['en-US']),2)
         self.assertEqual(tool.select_scale(2,544,'vision',['th-TH']),2)
+
+    def test_manual_dialogue_edge_margin_keeps_original_series_selection(self):
+        selected=(.025,.633,.985,.740)
+        effective=tool.dialogue_safety_roi(selected)
+        self.assertEqual(effective[0],selected[0])
+        self.assertEqual(effective[2],selected[2])
+        self.assertLessEqual(effective[1],.617)
+        self.assertGreater(effective[3],selected[3])
+        self.assertEqual(tool.dialogue_safety_roi(selected,automatic=True),selected)
+        self.assertEqual(tool.dialogue_safety_roi(selected,font_height=.04),selected)
+        self.assertEqual(tool.dialogue_safety_roi((0,.4,1,.8)),(0,.4,1,.8))
+        from subtitle_layout import ass_placement
+        event={'observed_layout':{'center_x':.5,'bottom_y':.5,'glyph_height':.2}}
+        document={'video':{'width':720,'height':1280},
+                  'calibration':{'roi':list(selected),'ocr_roi':list(effective)}}
+        y=round((effective[1]+.5*(effective[3]-effective[1]))*1280)
+        self.assertIn(f'\\pos(364,{y})',ass_placement(event,document))
+
+    def test_scene_labels_are_excluded_without_discarding_short_dialogue(self):
+        events=[]
+        for i in range(8):
+            events.append({'id':i+1,'start':i*2,'end':i*2+.8,'text':'คุณอันใช่ไหม',
+                           'frames':24,'observed_layout':{'center_x':.49,'bottom_y':.60+(i%2)*.04,
+                                                          'glyph_height':.43}})
+        events += [
+            {'id':9,'start':20,'end':20.07,'text':'6D438','frames':2,
+             'observed_layout':{'center_x':.35,'bottom_y':.34,'glyph_height':.29}},
+            {'id':10,'start':21,'end':21.17,'text':'Mercedes-Benz','frames':3,
+             'observed_layout':{'center_x':.86,'bottom_y':.42,'glyph_height':.16}},
+            {'id':11,'start':22,'end':22.04,'text':'ไป','frames':1,
+             'observed_layout':{'center_x':.49,'bottom_y':.59,'glyph_height':.39}},
+            {'id':12,'start':23,'end':23.04,'text':'moving sign','frames':1,
+             'observed_layout':{'center_x':.83,'bottom_y':.55,'glyph_height':.16}},
+        ]
+        kept,excluded=tool.exclude_off_band_graphics(events,{'roi':[.025,.633,.985,.74]})
+        self.assertEqual([item['text'] for item in excluded],
+                         ['6D438','Mercedes-Benz','moving sign'])
+        self.assertEqual(kept[-1]['text'],'ไป')
+        self.assertEqual([item['id'] for item in kept],list(range(1,10)))
+
+    def test_short_glyph_needs_source_image_evidence_before_exclusion(self):
+        events=[{'id':1,'start':1,'end':1+1/30,'text':'9',
+                 'frames':1,'confidence':.6,'observed_layout':{},
+                 'no_visible_glyph_evidence':True},
+                {'id':2,'start':2,'end':2+1/30,'text':'No',
+                 'frames':1,'confidence':.96,'observed_layout':{}},
+                {'id':3,'start':3,'end':3+.4,'text':'去',
+                 'frames':12,'confidence':.6,'observed_layout':{}},
+                {'id':4,'start':4,'end':4+1/30,'text':'哥',
+                 'frames':1,'confidence':.6,'observed_layout':{}}]
+        kept,excluded=tool.exclude_off_band_graphics(events,{'roi':[0,.7,1,.9]})
+        self.assertEqual([item['text'] for item in kept],['No','去','哥'])
+        self.assertEqual([(item['text'],item['exclusion_reason']) for item in excluded],
+                         [('9','no_visible_glyph_evidence')])
+
+    def test_single_frame_glyphs_are_checked_against_caption_pixels(self):
+        events=[];rows=[]
+        for index,value in enumerate((.08,.09,.1,.001,.08)):
+            held=index<3
+            events.append({'id':index+1,'first_frame':index,'start':index,
+                           'end':index+(.5 if held else 1/30),
+                           'frames':15 if held else 1,'confidence':.9 if held else .6,
+                           'text':f'caption {index}' if held else ('9' if index==3 else '哥')})
+            rows.append({'frame':index,'start':float(index),
+                         'ocr':{'lines':[{'box':[0,.1,.5,.2],
+                                          'candidates':[{'text':events[-1]['text']}]}]}})
+        with patch.object(tool,'frame_at',side_effect=lambda path,meta,seconds:seconds),\
+             patch.object(tool,'image_crop',side_effect=lambda image,roi,scale:image),\
+             patch('frame_features.text_mask',side_effect=lambda image:image),\
+             patch('dialogue_filter.line_mask_density',side_effect=lambda mask,box:(.08,.09,.1,.001,.08)[int(mask)]):
+            self.assertEqual(tool.verify_single_frame_glyphs(events,rows,'video',{},(0,0,1,1)),1)
+        self.assertTrue(events[3]['no_visible_glyph_evidence'])
+        self.assertNotIn('no_visible_glyph_evidence',events[4])
+
+    def test_sustained_scene_label_does_not_redefine_dialogue_style(self):
+        anchors=[{'id':i+1,'start':i*2,'end':i*2+.9,'text':f'dialogue {i}',
+                  'frames':27,'confidence':.95,
+                  'observed_layout':{'center_x':.5,'bottom_y':.63,
+                                     'glyph_height':.4}} for i in range(9)]
+        sign={'id':10,'start':19,'end':20.2,'text':'street sign',
+              'frames':36,'confidence':.98,
+              'observed_layout':{'center_x':.37,'bottom_y':.34,
+                                 'glyph_height':.25}}
+        kept,excluded=tool.exclude_off_band_graphics(anchors+[sign],
+                                                       {'roi':[0,.55,1,.85]})
+        self.assertEqual([event['text'] for event in excluded],['street sign'])
+        self.assertEqual(len(kept),len(anchors))
 
     def test_recurrent_multiscript_ocr_variants_form_one_observed_caption(self):
         readings=['สวัสดีครับ']*8+['สวัสดีคับ','สวัสดีครับ','สวสดีครับ',

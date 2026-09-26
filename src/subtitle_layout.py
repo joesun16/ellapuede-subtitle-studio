@@ -24,7 +24,8 @@ def observed_layout(rows):
 
 def ass_placement(event, document):
     layout = event.get('observed_layout')
-    roi = document.get('calibration', {}).get('roi')
+    calibration = document.get('calibration', {})
+    roi = calibration.get('ocr_roi') or calibration.get('roi')
     if not layout or not roi or len(roi) != 4:
         return ''  # Older result files retain the standard bottom style.
     values = [*roi, *(layout.get(k, float('nan')) for k in ('center_x', 'bottom_y', 'glyph_height'))]

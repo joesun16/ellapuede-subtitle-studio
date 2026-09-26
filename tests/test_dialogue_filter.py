@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch,Mock
 from PIL import Image
 import subtitle_ocr as core
-from dialogue_filter import filter_lines,typical_height,restore_connected_fades
+from dialogue_filter import filter_lines,prune_isolated_small_lines,typical_height,restore_connected_fades
 
 class DialogueRegionTests(unittest.TestCase):
     def test_small_orphan_glyph_above_full_dialogue_is_removed(self):
@@ -16,6 +16,21 @@ class DialogueRegionTests(unittest.TestCase):
                  'candidates':[{'text':'9','confidence':.99}]}
         self.assertEqual(filter_lines({'lines':[overlay,subtitle]},image,0)['lines'],[subtitle])
         self.assertEqual(filter_lines({'lines':[overlay]},image,0)['lines'],[overlay])
+
+    def test_small_embedded_or_below_glyph_is_removed_without_harming_short_dialogue(self):
+        subtitle={'box':[.27,.36,.45,.23],
+                  'candidates':[{'text':'เรากลับบ้านกัน','confidence':.98}]}
+        below={'box':[.29,.57,.02,.07],
+               'candidates':[{'text':'9','confidence':.99}]}
+        embedded={'box':[.69,.38,.03,.08],
+                  'candidates':[{'text':'A','confidence':.99}]}
+        equal_size={'box':[.30,.62,.30,.22],
+                    'candidates':[{'text':'5','confidence':.98}]}
+        result=prune_isolated_small_lines({'lines':[below,subtitle,embedded]})
+        self.assertEqual(result['lines'],[subtitle])
+        self.assertEqual(len(result['excluded_small_overlay_lines']),2)
+        self.assertEqual(prune_isolated_small_lines({'lines':[below]})['lines'],[below])
+        self.assertEqual(prune_isolated_small_lines({'lines':[subtitle,equal_size]})['lines'],[subtitle,equal_size])
 
     def test_role_labels_do_not_widen_dominant_dialogue_region(self):
         class OCR:

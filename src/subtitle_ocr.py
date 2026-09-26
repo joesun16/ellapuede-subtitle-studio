@@ -26,9 +26,10 @@ from output_policy import aligned_stem, output_stems
 
 from version import VERSION as RELEASE_VERSION
 VERSION = RELEASE_VERSION + '-beta'
-# Frame interpretation changed: discard isolated overlay glyphs before caching.
-# Earlier OCR results must not be reused with the new dialogue filter.
-OCR_CACHE_REVISION = '0.14.4-beta'
+# OCR crop margins changed for uncalibrated manually selected regions. Keep
+# frame caches from previous crop geometry separate; result refinements can
+# still reuse frames within this revision.
+OCR_CACHE_REVISION = '0.14.7-beta'
 # SRC holds the Python/Swift sources; ROOT holds bundled resources (models, assets,
 # .runtime). PyInstaller flattens both into _MEIPASS, so they coincide when frozen.
 SRC = Path(__file__).resolve().parent
@@ -545,7 +546,7 @@ class VisionPool:
                 return dict(retry,image_verified_fallback=True)
         return result
 
-    def _recognize_once(self, image, correction=False):
+    def _recognize_once(self, image, correction=False,attempt=0):
         p=None
         while True:
             try:p,responses=self.idle.get_nowait()
@@ -570,13 +571,17 @@ class VisionPool:
             try:p.stdin.write(json.dumps(request)+'\n');p.stdin.flush()
             except (BrokenPipeError,OSError) as error:
                 raise RuntimeError('OCR 子进程已退出，无法发送图像；请检查离线识别组件和模型是否完整。') from error
-            try:line=responses.get(timeout=90)
+            timeout=90 if isinstance(self,RapidPool) else 25
+            try:line=responses.get(timeout=timeout)
             except queue.Empty:
                 p.kill();p.wait()
                 if isinstance(self,RapidPool) and not getattr(self,'force_cpu',False):
                     self.reset_backend(cpu=True);control.emit('phase',phase='加速组件响应超时，正在切换 CPU 重试')
                     return self.recognize(image,correction)
-                raise RuntimeError('单帧 OCR 超过 90 秒；已停止识别进程，保留缓存供重试。')
+                if attempt==0 and not isinstance(self,RapidPool):
+                    control.emit('phase',phase='单帧识别未响应，重启组件重试')
+                    return self._recognize_once(image,correction,attempt=1)
+                raise RuntimeError(f'单帧 OCR 连续两次超过 {timeout} 秒；已停止识别进程，保留缓存供重试。')
             if not line:raise RuntimeError(f'OCR 子进程已退出（返回码 {p.poll()}）；请检查离线识别组件和模型是否完整。')
             result=json.loads(line)
             if 'error' in result:raise RuntimeError(result['error'])
@@ -852,34 +857,150 @@ def make_segments(rows):
     return events
 
 
-def exclude_off_band_graphics(events, calibration):
-    """Reject large, displaced title graphics inside an otherwise stable ROI.
+def verify_single_frame_glyphs(events, rows, path, meta, roi):
+    """Reject tiny OCR fragments only when the source image lacks caption pixels.
 
-    A manual rectangle can contain both the dialogue line and later end-card
-    lettering. The learned dialogue font and band are image observations, not
-    language-specific words. Without a stable calibration, preserve every cue.
+    A one-frame reply can be real. Confidence, duration and text length only
+    select candidates for checking; they never decide whether to delete one.
+    This mask is useful only after sustained captions establish that the video
+    uses outlined light lettering. Otherwise every short cue is retained.
     """
+    from statistics import median
+    from dialogue_filter import line_mask_density
+    from frame_features import text_mask
+
+    by_frame={row['frame']:row for row in rows if row.get('ocr',{}).get('lines')}
+
+    def density(event):
+        row=by_frame.get(event.get('first_frame'))
+        if row is None:return None
+        lines=[line for line in row['ocr']['lines'] if line.get('candidates')]
+        if not lines:return None
+        image=image_crop(frame_at(path,meta,row['start']),roi,1)
+        mask=text_mask(image)
+        return max(line_mask_density(mask,line['box']) for line in lines)
+
+    anchors=[event for event in events if event.get('frames',0)>=5 and
+             event.get('end',0)-event.get('start',0)>=.35 and
+             event.get('confidence',0)>=.8 and len(event.get('text',''))>=3]
+    baseline=[]
+    for event in anchors[:8]:
+        control.check()
+        try:value=density(event)
+        except (OSError,ValueError):continue
+        if value is not None:baseline.append(value)
+    if len(baseline)<3 or median(baseline)<.03:return 0
+    rejected=0
+    for event in events:
+        if not (event.get('frames')==1 and
+                event.get('end',0)-event.get('start',0)<.10 and
+                sum(character.isalnum() for character in event['text'])<=2 and
+                event.get('confidence',1)<.72):continue
+        control.check()
+        try:value=density(event)
+        except (OSError,ValueError):continue
+        if value is not None and value<min(.008,median(baseline)*.15):
+            event['no_visible_glyph_evidence']=True
+            rejected+=1
+    return rejected
+
+
+def exclude_off_band_graphics(events, calibration):
+    """Keep the recurring dialogue style, not every scene label inside the ROI.
+
+    Sparse calibration samples can miss captions entirely. Stable, sustained
+    cues from the full scan provide a second, language-independent layout
+    reference. A short outlier needs multiple geometric disagreements before
+    removal, so a brief genuine reply is not dropped for duration alone.
+    """
+    from statistics import median
     candidates=calibration.get('candidates') or []
     baseline=candidates[0] if candidates else {}
     font=calibration.get('font_height') or 0
     band=baseline.get('roi') or []
-    roi=calibration.get('roi') or []
-    if (font<=0 or len(roi)!=4 or len(band)!=4 or
-            baseline.get('coverage',0)<4 or baseline.get('unique',0)<3):
-        return events,[]
-    center=(band[1]+band[3])/2
+    roi=calibration.get('ocr_roi') or calibration.get('roi') or []
+    calibrated=(font>0 and len(roi)==4 and len(band)==4 and
+                baseline.get('coverage',0)>=4 and baseline.get('unique',0)>=3)
+    center=(band[1]+band[3])/2 if calibrated else None
+    anchors=[event for event in events
+             if event.get('end',0)-event.get('start',0)>=.35 and event.get('frames',0)>=5
+             and all(isinstance((event.get('observed_layout') or {}).get(k),(int,float))
+                     for k in ('center_x','bottom_y','glyph_height'))]
+    learned=None
+    if len(anchors)>=6:
+        layouts=[event['observed_layout'] for event in anchors]
+        # A car badge can itself be visible for seconds. Letting it define
+        # the 10th percentile widens the dialogue band until the badge looks
+        # normal. Learn from the majority typography cluster instead.
+        rough_x=median(item['center_x'] for item in layouts)
+        rough_glyph=median(item['glyph_height'] for item in layouts)
+        typical=[item for item in layouts
+                 if abs(item['center_x']-rough_x)<=.14 and
+                 .65<=item['glyph_height']/max(rough_glyph,1e-9)<=1.55]
+        if len(typical)>=6:layouts=typical
+        xs=[item['center_x'] for item in layouts]
+        ys=sorted(item['bottom_y'] for item in layouts)
+        hs=[item['glyph_height'] for item in layouts]
+        learned=(median(xs),ys[int((len(ys)-1)*.1)],ys[int((len(ys)-1)*.9)],median(hs))
     kept=[];excluded=[]
     for event in events:
         layout=event.get('observed_layout') or {}
         glyph=layout.get('glyph_height')
         bottom=layout.get('bottom_y')
-        if not glyph or bottom is None:
-            kept.append(event);continue
-        height=glyph*(roi[3]-roi[1])
-        cy=roi[1]+(bottom-glyph/2)*(roi[3]-roi[1])
-        oversized=height>font*1.55
-        shifted=(height>font*1.25 and abs(cy-center)>max(.035,font*.75))
-        (excluded if oversized or shifted else kept).append(event)
+        reason=None
+        # Duration and confidence cannot prove a reply is false. This marker
+        # is set only after comparing the OCR box with the actual source frame.
+        if event.get('no_visible_glyph_evidence'):
+            reason='no_visible_glyph_evidence'
+        if reason is None and glyph and bottom is not None and calibrated:
+            height=glyph*(roi[3]-roi[1])
+            cy=roi[1]+(bottom-glyph/2)*(roi[3]-roi[1])
+            if height>font*1.55 or (height>font*1.25 and abs(cy-center)>max(.035,font*.75)):
+                reason='oversized_or_displaced_graphic'
+        if reason is None and learned and glyph and bottom is not None:
+            x=layout.get('center_x')
+            if isinstance(x,(int,float)):
+                center_x,low_y,high_y,typical_glyph=learned
+                off_center=abs(x-center_x)>.18
+                off_band=bottom<low_y-.08 or bottom>high_y+.08
+                odd_size=glyph<typical_glyph*.74 or glyph>typical_glyph*1.7
+                weak=(event.get('end',0)-event.get('start',0)<.30 or event.get('frames',0)<5)
+                differences=sum((off_center,off_band,odd_size))
+                if ((off_center and (off_band or odd_size)) or
+                        (off_band and odd_size) or
+                        (off_band and weak and differences>=2)):
+                    reason='scene_text_layout'
+        if reason:
+            excluded.append(dict(event,exclusion_reason=reason))
+        else:kept.append(event)
+    if learned and excluded:
+        # The same physical plate/sign may be read as many partial strings.
+        # Connect adjacent PTS and nearby boxes, without matching any word or
+        # writing a language-specific blacklist. A normal-band dialogue cue
+        # cannot be swallowed merely because it appears nearby in time.
+        center_x,low_y,high_y,_=learned
+        remaining=kept
+        while True:
+            next_kept=[];new_excluded=[]
+            for event in remaining:
+                layout=event.get('observed_layout') or {}
+                x=layout.get('center_x');y=layout.get('bottom_y')
+                if not isinstance(x,(int,float)) or not isinstance(y,(int,float)):
+                    next_kept.append(event);continue
+                abnormal=(abs(x-center_x)>.12 or y<low_y-.06 or y>high_y+.06)
+                adjacent=any(
+                    isinstance((other.get('observed_layout') or {}).get('center_x'),(int,float)) and
+                    isinstance((other.get('observed_layout') or {}).get('bottom_y'),(int,float)) and
+                    abs(x-other['observed_layout']['center_x'])<=.12 and
+                    abs(y-other['observed_layout']['bottom_y'])<=.12 and
+                    event['start']-other['end']<=.35 and other['start']-event['end']<=.35
+                    for other in excluded)
+                if abnormal and adjacent:
+                    new_excluded.append(dict(event,exclusion_reason='scene_text_track'))
+                else:next_kept.append(event)
+            if not new_excluded:break
+            excluded.extend(new_excluded);remaining=next_kept
+        kept=remaining
     for index,event in enumerate(kept,1):event['id']=index
     return kept,excluded
 
@@ -1061,6 +1182,20 @@ def prepare_manual_region(path,meta,pool,cache,args,calibration):
     return result
 
 
+def dialogue_safety_roi(selected,automatic=False,font_height=None):
+    """Leave a small OCR-only margin around a tightly selected dialogue band.
+
+    Only enable this when sampling could not learn a stable dialogue font.
+    Reframing a well-calibrated area can itself change OCR readings and omit
+    short subtitles. The saved series rectangle is never changed.
+    """
+    left,top,right,bottom=selected
+    height=bottom-top
+    if automatic or font_height or height>=.25 or right-left<.35:return tuple(selected)
+    margin=min(.018,max(.008,height*.15))
+    return (left,max(0,top-margin),right,min(1,bottom+margin*.5))
+
+
 def private_result_stem(path,export_stem,args):
     root=getattr(args,'cache_root',None) or args.output/'.ellapuede-cache'
     key=hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:24]
@@ -1107,8 +1242,12 @@ def run_one(path, stem, args, pool):
         effective_languages=[pool.last_detected_language]
     if 'auto' not in args.language and effective_languages!=list(args.language):
         raise RuntimeError('识别引擎在处理时切换了手动指定的语言，已停止以避免导出错误字幕。')
+    selected_roi=tuple(calibration['roi'])
+    roi=dialogue_safety_roi(selected_roi,calibration.get('automatic',False),
+                            calibration.get('font_height'))
+    calibration=dict(calibration,ocr_roi=list(roi))
     config = {'dialogue_max_height':pool.dialogue_max_height,'dialogue_min_height':pool.dialogue_min_height,
-              'dialogue_min_mask_density':pool.dialogue_min_mask_density,'effective_roi':calibration['roi'],'version': OCR_CACHE_REVISION, 'roi': args.roi, 'languages': args.language,'effective_languages':effective_languages,
+              'dialogue_min_mask_density':pool.dialogue_min_mask_density,'effective_roi':list(roi),'version': OCR_CACHE_REVISION, 'roi': args.roi, 'languages': args.language,'effective_languages':effective_languages,
               'strategy':getattr(args,'strategy','accurate'),'scale': args.scale, 'words': pool.words, 'engine': pool.name,'engine_route':getattr(args,'engine',None),
               'engine_source': hashlib.sha256((OCR_CACHE_REVISION+pool.name).encode()).hexdigest(),
               'macos': __import__('platform').mac_ver()[0]}
@@ -1118,14 +1257,18 @@ def run_one(path, stem, args, pool):
     save_json(cache / 'job.json', {'source': str(path), 'sha256': fingerprint, 'config': config})
     calibration_file = cache / 'calibration.json'
     save_json(calibration_file,calibration)
-    roi = tuple(calibration['roi'])
     print(f'  字幕区域 {",".join(f"{x:.4f}" for x in roi)}；{getattr(args,'strategy','accurate')}；并发 {args.workers}', flush=True)
     stem.parent.mkdir(parents=True, exist_ok=True)
-    control.emit('region',roi=list(roi),automatic=calibration.get('automatic',args.roi is None))
+    control.emit('region',roi=list(selected_roi),ocr_roi=list(roi),automatic=calibration.get('automatic',args.roi is None))
     control.emit('phase',phase='逐帧识别')
     from temporal_scan import scan_frames as verified_scan
     rows, perf = verified_scan(path, meta, roi, pool, cache, args.workers, args.scale)
-    from dialogue_filter import restore_connected_fades
+    from dialogue_filter import prune_isolated_small_lines,restore_connected_fades
+    for row in rows:
+        cleaned=prune_isolated_small_lines(row['ocr'])
+        if cleaned is not row['ocr']:
+            row['ocr']=cleaned
+            row['text'],row['confidence']=read_lines(cleaned)
     perf['fading_frames_restored']=restore_connected_fades(rows)
     print('  整理字幕并自动导出…', flush=True)
     control.emit('phase',phase='整理字幕并自动导出')
@@ -1134,14 +1277,37 @@ def run_one(path, stem, args, pool):
     perf['line_check_seconds']=round(time.monotonic()-refine_started,2)
     refine_started=time.monotonic()
     from quality_refine import refine
-    perf['image_verified_repairs']=refine(rows,path,meta,roi,pool,args.scale,args.workers)
+    _,pre_excluded=exclude_off_band_graphics(make_segments(rows),calibration)
+    scene_ranges=[event for event in pre_excluded
+                  if event.get('exclusion_reason') in
+                  ('scene_text_layout','scene_text_track','oversized_or_displaced_graphic')]
+    skip_scene={index for index,row in enumerate(rows) if row['text'] and any(
+        event['start']<=row['start']<event['end'] and key(row['text'])==key(event['text'])
+        for event in scene_ranges)}
+    perf['scene_frames_skipped_second_pass']=len(skip_scene)
+    perf['image_verified_repairs']=refine(rows,path,meta,roi,pool,args.scale,args.workers,
+                                          skip_indices=skip_scene)
     perf['quality_check_seconds']=round(time.monotonic()-refine_started,2)
     refine_started=time.monotonic()
-    from visual_consensus import refine as refine_visual_consensus, refine_recurrent_variant
+    from visual_consensus import (refine as refine_visual_consensus,
+                                  refine_recurrent_variant, refine_held_variants,
+                                  refine_low_confidence_holds,
+                                  refine_short_multiline_openings,
+                                  refine_combining_mark_variants,
+                                  refine_sparse_visible_holds)
+    perf['low_confidence_hold_repairs']=refine_low_confidence_holds(rows,path,meta,roi)
     perf['visual_consensus_repairs']=refine_visual_consensus(rows,path,meta,roi,pool)
     perf['recurrent_glyph_repairs']=refine_recurrent_variant(rows,path,meta,roi,pool)
+    perf['held_caption_repairs']=refine_held_variants(rows,path,meta,roi,pool)
+    perf['multiline_opening_repairs']=refine_short_multiline_openings(rows,path,meta,roi)
+    perf['combining_mark_repairs']=refine_combining_mark_variants(rows,path,meta,roi)
+    perf['sparse_visible_hold_repairs']=refine_sparse_visible_holds(rows,path,meta,roi,
+                                                                    skip_indices=skip_scene)
     perf['visual_consensus_seconds']=round(time.monotonic()-refine_started,2)
-    events,excluded_layout_events=exclude_off_band_graphics(make_segments(rows),calibration)
+    events=make_segments(rows)
+    perf['image_rejected_glyphs']=verify_single_frame_glyphs(events,rows,path,meta,roi)
+    events,excluded_layout_events=exclude_off_band_graphics(events,calibration)
+    perf['excluded_scene_text_events']=len(excluded_layout_events)
     if not events:
         raise ValueError('没有识别出字幕，缓存已保留；请检查区域和语言')
     document = {'tool_version': VERSION, 'source': str(path), 'source_sha256': fingerprint,
@@ -1150,7 +1316,8 @@ def run_one(path, stem, args, pool):
                 'resolved_languages':effective_languages,'backend':getattr(pool,'last_backend',pool.name),
                 'status': 'automatic_exported', 'recovered_line_frames': recovered,
                 'events': events,
-                'excluded_layout_events': [{'start':e['start'],'end':e['end'],'text':e['text']}
+                'excluded_layout_events': [{'start':e['start'],'end':e['end'],'text':e['text'],
+                                            'reason':e.get('exclusion_reason')}
                                            for e in excluded_layout_events]}
     validate(events, meta['duration'])
     export_stem=getattr(args,'subtitle_stem',None) or stem

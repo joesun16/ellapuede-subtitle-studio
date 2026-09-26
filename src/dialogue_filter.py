@@ -15,6 +15,37 @@ def line_mask_density(mask,box):
     if x2<=x1 or y2<=y1:return 0.
     return float(mask[y1:y2,x1:x2].mean())
 
+def prune_isolated_small_lines(result):
+    """Discard tiny detector fragments attached to a full dialogue line.
+
+    The check is geometric and works on cached OCR rows too. A one-character
+    subtitle by itself, or a second line in the same font, remains untouched.
+    """
+    lines=result.get('lines',[])
+    if len(lines)<2:return result
+    largest=max(line['box'][3] for line in lines)
+    substantial=[]
+    for line in lines:
+        candidates=line.get('candidates') or []
+        caption=candidates[0].get('text','').strip() if candidates else ''
+        if line['box'][3]>=largest*.8 and len(caption)>=3:
+            substantial.append(line)
+    if not substantial:return result
+    retained=[];excluded=[]
+    for line in lines:
+        candidates=line.get('candidates') or []
+        value=candidates[0].get('text','').strip() if candidates else ''
+        x,y,w,h=line['box'];cx=x+w/2;cy=y+h/2
+        fragment=(len(value)==1 and value.isalnum() and h<largest*.65 and w<.08)
+        attached=fragment and any(
+            main['box'][0]-.04<=cx<=main['box'][0]+main['box'][2]+.04 and
+            abs(cy-(main['box'][1]+main['box'][3]/2))<=max(.12,main['box'][3]*.75)
+            for main in substantial)
+        (excluded if attached else retained).append(line)
+    if not excluded:return result
+    return dict(result,lines=retained,
+                excluded_small_overlay_lines=list(result.get('excluded_small_overlay_lines',[]))+excluded)
+
 def filter_lines(result,image,minimum_height,maximum_height=0,minimum_mask_density=0):
     # A mask retry removes surrounding background/padding from detector boxes.
     # It is accepted only against an already observed text hypothesis upstream.
@@ -35,28 +66,10 @@ def filter_lines(result,image,minimum_height,maximum_height=0,minimum_mask_densi
             fits_height=line_mask_density(mask,line['box'])>=minimum_mask_density
             if not fits_height:excluded_mask.append(line)
         (kept if fits_height else excluded).append(line)
-    # A small, isolated glyph above an otherwise full-size dialogue line is
-    # commonly a logo or a detector fragment. Do not let it become a second
-    # subtitle line (or a one-frame numeric cue). A genuine one-character
-    # subtitle shown alone is unaffected.
-    if len(kept)>=2:
-        largest=max(line['box'][3] for line in kept)
-        substantial=[line for line in kept if line['box'][3]>=largest*.8]
-        if substantial:
-            top=min(line['box'][1] for line in substantial)
-            retained=[]
-            for line in kept:
-                candidates=line.get('candidates') or []
-                text=candidates[0].get('text','').strip() if candidates else ''
-                box=line['box']
-                orphan=(len(text)==1 and box[3]<largest*.65 and box[2]<.08
-                        and box[1]+box[3]/2<top)
-                if orphan:excluded.append(line)
-                else:retained.append(line)
-            kept=retained
-    if not excluded:return result
-    return dict(result,lines=kept,excluded_small_overlay_lines=excluded,
-                excluded_mask_lines=excluded_mask)
+    if excluded:
+        result=dict(result,lines=kept,excluded_small_overlay_lines=excluded,
+                    excluded_mask_lines=excluded_mask)
+    return prune_isolated_small_lines(result)
 
 def restore_connected_fades(rows,max_gap=.16):
     """Keep a fading caption only when its own OCR matches a nearby kept line."""

@@ -22,7 +22,7 @@ def rows_for(texts):
 
 class AssessmentFollowupTests(unittest.TestCase):
     def test_shadow_never_changes_original_negations_numbers_or_pts(self):
-        for pair in [('I can leave now', "I can't leave now"), ('Take 100 dollars', 'Take 900 dollars'), ('김민수', '김민수2')]:
+        for pair in [('I can leave now', "I can't leave now"), ('Take 100 dollars', 'Take 900 dollars'), ('한준원', '한준원2')]:
             rows = rows_for([pair[0]]*8+[pair[1]]+[pair[0]]*8)
             before = copy.deepcopy(rows)
             events = core.make_segments(rows)
@@ -99,6 +99,16 @@ class AssessmentFollowupTests(unittest.TestCase):
         with patch('av.open',return_value=container), patch.object(core,'oriented_image',return_value=Image.new('RGB',(80,30))), patch.object(core,'RapidPool',side_effect=ImportError('missing')), patch('quality_refine.retry_image',return_value=('hello',.99)):
             self.assertEqual(refine(rows,'test',{'stream_index':0},(0,0,1,1),pool,1,1),1)
         self.assertTrue(all(row['text']=='hello' for row in rows))
+
+    def test_known_scene_text_skips_second_ocr_pass(self):
+        from quality_refine import refine
+        rows=rows_for(['hello']*8+['hello!']+['hello']*8)
+        pool=SimpleNamespace(languages=['en-US'],name='AppleVision')
+        with patch('av.open') as opened:
+            self.assertEqual(refine(rows,'unused',{'stream_index':0},(0,0,1,1),
+                                    pool,1,1,skip_indices={8}),0)
+            opened.assert_not_called()
+        self.assertEqual(rows[8]['text'],'hello!')
 
     def test_english_scale_two_does_not_repeat_identical_secondary_crop(self):
         from quality_refine import refine

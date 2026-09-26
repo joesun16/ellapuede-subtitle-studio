@@ -90,7 +90,7 @@ def _blank_targets(rows,runs):
 
 
 def targets(rows):
-    """Return narrow A-B-A OCR anomalies, never ordinary caption transitions."""
+    """Return image-verifiable islands bracketed by the same observed caption."""
     import subtitle_ocr as core
     found=[];runs=_runs(rows)
     for n in range(1,len(runs)-1):
@@ -101,7 +101,7 @@ def targets(rows):
         if rows[rs]['start']-rows[le-1]['end']>.60:continue
         if (rows[le-1]['end']-rows[ls]['start']+
                 rows[re-1]['end']-rows[rs]['start']<.20):continue
-        if core._protected_text_change(left,variant):continue
+        if _protected_for_visual_check(left,variant):continue
         # A one-frame OCR hallucination can be wholly unrelated to the held
         # glyph (for example 哥 -> f -> 哥). Its pixels, not its text similarity,
         # decide whether it is repaired below.
@@ -113,6 +113,34 @@ def targets(rows):
         if bounds is None:continue
         found.append({'kind':'substitution','reference':left,'left':le-1,'right':rs,
                       'suspects':list(range(start,end)),'bounds':bounds})
+    # Several different one-frame OCR readings can appear inside one held
+    # caption (A-B-C-A). A single-variant A-B-A detector cannot see that
+    # island, but every suspect can still be checked against the actual glyphs.
+    for n in range(len(runs)-3):
+        left,ls,le=runs[n]
+        if not left:continue
+        for right_index in range(n+3,min(len(runs),n+5)):
+            right,rs,re=runs[right_index]
+            middle=runs[n+1:right_index]
+            if (not right or not all(value and not _protected_for_visual_check(left,value)
+                                      for value,_,_ in middle)):
+                break
+            if rows[rs]['start']-rows[le-1]['end']>.65:break
+            if right!=left:continue
+            suspects=[i for _,start,end in middle for i in range(start,end)]
+            if (rows[suspects[-1]]['end']-rows[suspects[0]]['start']>.45 or
+                    rows[le-1]['end']-rows[ls]['start']+
+                    rows[re-1]['end']-rows[rs]['start']<.20 or
+                    not core._same_caption_geometry(rows[ls:le],rows[rs:re])):
+                break
+            if any(SequenceMatcher(None,left.casefold(),value.casefold()).ratio()<.55
+                   and rows[end-1]['end']-rows[start]['start']>.08
+                   for value,start,end in middle):break
+            bounds=_bounds(rows[le-1],rows[rs])
+            if bounds is not None:
+                found.append({'kind':'substitution','reference':left,'left':le-1,
+                              'right':rs,'suspects':suspects,'bounds':bounds})
+            break
     return found+_blank_targets(rows,runs)
 
 
@@ -139,6 +167,436 @@ def _similar_gap_mask(a,b):
     counts=tile.reshape(tile.shape[0]//16,16,
                         tile.shape[1]//16,16).sum(axis=(1,3))
     return bool(counts.max()<=12 and np.count_nonzero(counts>5)<=2)
+
+
+def _held_line(row):
+    """A provisional reading, including a low-confidence line already seen by OCR.
+
+    The provisional reading is never exported on its own. It only connects a
+    visually verified held caption across an OCR confidence dip.
+    """
+    import subtitle_ocr as core
+    lines=[line for line in row.get('ocr',{}).get('lines',[])
+           if line.get('candidates') and
+           line['candidates'][0].get('confidence',0)>=.29 and
+           core.normalize(line['candidates'][0].get('text',''))]
+    if len(lines)!=1:return None
+    text=core.normalize(lines[0]['candidates'][0]['text'])
+    if not any(char.isalnum() for char in text):return None
+    return core.key(text),lines[0]['box']
+
+
+def _held_variant_groups(rows,include_high_confidence=False):
+    """Find repeated OCR flips in one line, without deciding from text alone."""
+    import subtitle_ocr as core
+    readings=[_held_line(row) for row in rows]
+    groups=[];i=0
+    while i<len(rows):
+        first=readings[i]
+        if first is None:
+            i+=1;continue
+        start=i;indices=[i];i+=1
+        while i<len(rows) and readings[i] is not None:
+            text,box=readings[i];previous=readings[indices[-1]]
+            reference,anchor_box=first
+            cx=lambda b:b[0]+b[2]/2
+            cy=lambda b:b[1]+b[3]/2
+            if (rows[i]['start']-rows[indices[-1]]['end']>.05 or
+                    rows[i]['end']-rows[start]['start']>2.5 or
+                    core._protected_text_change(reference,text) or
+                    core._protected_text_change(previous[0],text) or
+                    min(SequenceMatcher(None,reference.casefold(),text.casefold()).ratio(),
+                        SequenceMatcher(None,previous[0].casefold(),text.casefold()).ratio())<.78 or
+                    abs(cx(box)-cx(anchor_box))>.075 or abs(cy(box)-cy(anchor_box))>.085 or
+                    not .65<=box[3]/max(anchor_box[3],1e-9)<=1.55):
+                break
+            indices.append(i);i+=1
+        values=[readings[index][0] for index in indices]
+        switches=sum(a!=b for a,b in zip(values,values[1:]))
+        if (len(indices)>=6 and switches>=3 and len(set(values))>=2 and
+                rows[indices[-1]]['end']-rows[start]['start']>=.20 and
+                (include_high_confidence or
+                 sum(rows[index]['confidence']<.5 for index in indices)>=2) and
+                sum(rows[index]['confidence']>=.5 for index in indices)>=3):
+            runs=[]
+            for index in indices:
+                if runs and readings[index][0]==readings[runs[-1][-1]][0]:runs[-1].append(index)
+                else:runs.append([index])
+            if len(runs)<=24:groups.append((indices,runs,readings))
+        if i==start:i+=1
+    return groups
+
+
+def refine_low_confidence_holds(rows,path,meta,roi):
+    """Restore a repeatedly observed line while its OCR score flickers.
+
+    A single accepted OCR frame alone is not evidence of the whole duration:
+    the same provisional text must recur on at least five contiguous source
+    frames, and its actual glyph mask must agree across the interval.
+    """
+    import av
+    import subtitle_ocr as core
+    from frame_features import text_mask
+    from video_crops import FrameCropper
+    readings=[_held_line(row) for row in rows]
+    groups=[];i=0
+    while i<len(rows):
+        first=readings[i]
+        if first is None:
+            i+=1;continue
+        indices=[i];i+=1
+        while i<len(rows) and readings[i] is not None:
+            text,box=readings[i];reference,base=first
+            if (text!=reference or rows[i]['start']-rows[indices[-1]]['end']>.05 or
+                    abs(box[0]+box[2]/2-base[0]-base[2]/2)>.045 or
+                    abs(box[1]+box[3]/2-base[1]-base[3]/2)>.065):
+                break
+            indices.append(i);i+=1
+        missing=[index for index in indices if not rows[index]['text']]
+        if (len(indices)>=5 and len(missing)>=3 and
+                rows[indices[-1]]['end']-rows[indices[0]]['start']>=.15 and
+                all(not rows[index]['text'] or core.key(rows[index]['text'])==first[0]
+                    for index in indices) and
+                any(core.key(rows[index]['text'])==first[0] for index in indices)):
+            groups.append((indices,first[0]))
+    if not groups:return 0
+    cropper=FrameCropper(roi);repaired=0
+    with av.open(str(path)) as container:
+        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
+        for indices,reading in groups:
+            core.control.check()
+            accepted=[index for index in indices if core.key(rows[index]['text'])==reading]
+            samples=sorted({indices[0],indices[len(indices)//2],indices[-1],
+                            accepted[len(accepted)//2]})
+            boxes=[readings[index][1] for index in indices]
+            bounds=(max(0,min(box[0] for box in boxes)-.008),
+                    max(0,min(box[1] for box in boxes)-.015),
+                    min(1,max(box[0]+box[2] for box in boxes)+.008),
+                    min(1,max(box[1]+box[3] for box in boxes)+.015))
+            masks={}
+            for index,frame in _needed_frames(container,stream,rows,samples,meta):
+                mask=text_mask(cropper.crop(frame));h,w=mask.shape
+                x1,y1,x2,y2=bounds
+                masks[index]=mask[round(y1*h):round(y2*h),
+                                  round(x1*w):round(x2*w)].copy()
+            if len(masks)!=len(samples) or not all(_similar_gap_mask(masks[a],masks[b])
+                                                    for a,b in zip(samples,samples[1:])):
+                continue
+            for index in indices:
+                if rows[index]['text']:continue
+                rows[index]['text']=reading
+                rows[index]['confidence']=.5
+                rows[index]['image_verified']=True
+                rows[index]['held_caption_verified']=True
+                repaired+=1
+    return repaired
+
+
+def refine_sparse_visible_holds(rows,path,meta,roi,skip_indices=()):
+    """Extend a sparse OCR hit only across visibly identical subtitle glyphs.
+
+    Some short Chinese or Thai captions are displayed for many frames while a
+    recognizer returns text in only one or two. Source-frame masks establish
+    the actual start/end; nearby dialogue or scene text cannot cross a changed
+    glyph or a blank visual boundary.
+    """
+    import av
+    import subtitle_ocr as core
+    from frame_features import text_mask
+    from video_crops import FrameCropper
+    excluded=set(skip_indices);runs=_runs(rows);candidates=[]
+    for value,start,end in runs:
+        if (not value or start in excluded or end-start>4 or
+                rows[end-1]['end']-rows[start]['start']>.18):continue
+        anchor=next((i for i in range(start,end) if rows[i].get('confidence',0)>=.5 and
+                     _tight_bounds(rows[i]) is not None),None)
+        if anchor is None:continue
+        bounds=_tight_bounds(rows[anchor])
+        left=start
+        while (left>0 and rows[start]['start']-rows[left-1]['start']<=1.5 and
+               (not rows[left-1]['text'] or core.key(rows[left-1]['text'])==value) and
+               left-1 not in excluded):
+            left-=1
+        right=end
+        while (right<len(rows) and rows[right]['start']-rows[end-1]['end']<=1.5 and
+               (not rows[right]['text'] or core.key(rows[right]['text'])==value) and
+               right not in excluded):
+            right+=1
+        if right-left<5:continue
+        candidates.append((value,start,end,anchor,left,right,bounds))
+    if not candidates:return 0
+    cropper=FrameCropper(roi);repaired=0
+    core.control.emit('phase',phase=f'核验 {len(candidates)} 处持续字幕字形')
+    core.control.emit('verify_progress',done=0,total=len(candidates),base=.96,span=.02)
+    with av.open(str(path)) as container:
+        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
+        for candidate_number,(value,start,end,anchor,left,right,bounds) in enumerate(candidates,1):
+            core.control.check()
+            core.control.emit('verify_progress',done=candidate_number-1,total=len(candidates),
+                              base=.96,span=.02)
+            wanted=list(range(left,right));masks={}
+            for index,frame in _needed_frames(container,stream,rows,wanted,meta):
+                mask=text_mask(cropper.crop(frame));h,w=mask.shape
+                x1,y1,x2,y2=bounds
+                masks[index]=mask[round(y1*h):round(y2*h),
+                                  round(x1*w):round(x2*w)].copy()
+            reference=masks.get(anchor)
+            if reference is None or np.count_nonzero(reference)<65:continue
+            visual_left=start
+            while visual_left>left and _similar_gap_mask(reference,masks.get(visual_left-1)):
+                visual_left-=1
+            visual_right=end
+            while visual_right<right and _similar_gap_mask(reference,masks.get(visual_right)):
+                visual_right+=1
+            if visual_right-visual_left<5:continue
+            for index in range(visual_left,visual_right):
+                if rows[index]['text']:continue
+                rows[index]['text']=rows[anchor]['text']
+                rows[index]['confidence']=max(.5,rows[anchor]['confidence'])
+                rows[index]['image_verified']=True
+                rows[index]['held_caption_verified']=True
+                repaired+=1
+    core.control.emit('verify_progress',done=len(candidates),total=len(candidates),
+                      base=.96,span=.02)
+    return repaired
+
+
+def refine_held_variants(rows,path,meta,roi,pool):
+    """Coalesce a held line only after checking real pixels and repeated OCR.
+
+    A true word, number, or subtitle boundary remains separate when its glyph
+    mask changes. OCR correction only chooses among strings already observed
+    in this same span, and must agree on at least two distinct source frames.
+    """
+    from video_crops import FrameCropper
+    import subtitle_ocr as core
+    import av
+    from frame_features import text_mask
+    groups=_held_variant_groups(rows,
+        include_high_confidence=getattr(pool,'name','').startswith('RapidOCR'))
+    if not groups:return 0
+    cropper=FrameCropper(roi);repaired=0
+    core.control.emit('phase',phase=f'核验 {len(groups)} 处连续字幕画面')
+    with av.open(str(path)) as container, ExitStack() as cleanup:
+        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
+        secondary=None
+        for indices,runs,readings in groups:
+            core.control.check()
+            # Every changed reading gets a representative frame. This rules
+            # out a real short word change hiding between two long captions.
+            representatives=[run[len(run)//2] for run in runs]
+            xs=[readings[index][1][0] for index in indices]
+            ys=[readings[index][1][1] for index in indices]
+            rights=[readings[index][1][0]+readings[index][1][2] for index in indices]
+            bottoms=[readings[index][1][1]+readings[index][1][3] for index in indices]
+            bounds=(max(0,min(xs)-.008),max(0,min(ys)-.015),
+                    min(1,max(rights)+.008),min(1,max(bottoms)+.015))
+            masks={};crops={}
+            for index,frame in _needed_frames(container,stream,rows,representatives,meta):
+                crop=cropper.crop(frame);mask=text_mask(crop);h,w=mask.shape
+                x1,y1,x2,y2=bounds
+                masks[index]=mask[round(y1*h):round(y2*h),
+                                  round(x1*w):round(x2*w)].copy()
+                crops[index]=crop
+            if len(masks)!=len(representatives):continue
+            if not all(_similar_gap_mask(masks[a],masks[b])
+                       for a,b in zip(representatives,representatives[1:])):
+                continue
+            observed=({readings[index][0] for index in indices} |
+                      {core.key(rows[index]['text']) for index in indices if rows[index]['text']})
+            eligible=[index for index in indices if rows[index]['confidence']>=.5]
+            # Spread reads across the held interval instead of reading three
+            # nearly identical adjacent frames.
+            chosen=[]
+            for part in (.2,.5,.8):
+                target=rows[indices[0]]['start']+part*(rows[indices[-1]]['end']-rows[indices[0]]['start'])
+                index=min(eligible,key=lambda candidate:abs(rows[candidate]['start']-target))
+                if index not in chosen:chosen.append(index)
+            votes=Counter();primary_readings={}
+            for index in chosen:
+                if index not in crops:
+                    for found,frame in _needed_frames(container,stream,rows,[index],meta):
+                        crops[found]=cropper.crop(frame)
+                crop=crops.get(index)
+                if crop is None:continue
+                result=pool.recognize(core.image_crop(crop,(0,0,1,1),2),correction=True)
+                text,confidence=core.read_lines(result)
+                if confidence>=.8 and core.key(text) in observed:
+                    votes[core.key(text)]+=1;primary_readings[index]=core.key(text)
+            canonical,count=votes.most_common(1)[0] if votes else ('',0)
+            # A second recognizer is useful only when the primary is visibly
+            # inconsistent on these same pixels. Run it on three suspect
+            # frames, never over the whole episode or as a blind replacement.
+            if (len(set(primary_readings.values()))>1 and len(chosen)>=3 and
+                    getattr(pool,'name','').startswith('AppleVision') and
+                    len(getattr(pool,'languages',[]))==1 and pool.languages[0]!='auto'):
+                if secondary is None:
+                    from optional_ocr import OptionalOCR
+                    secondary=OptionalOCR(pool,'连续字幕独立复核',
+                        lambda:core.RapidPool(pool.languages,[],1,device='cpu'))
+                    cleanup.callback(secondary.close)
+                alternate=Counter()
+                for index in chosen:
+                    crop=crops.get(index)
+                    if crop is None:continue
+                    result=secondary.recognize(core.image_crop(crop,(0,0,1,1),2))
+                    if result is None:break
+                    text,confidence=core.read_lines(result)
+                    if confidence>=.85 and core.key(text) in observed:
+                        alternate[core.key(text)]+=1
+                if alternate:
+                    independent,independent_count=alternate.most_common(1)[0]
+                    if independent_count==len(chosen):
+                        canonical,count=independent,independent_count
+            if count<2:continue
+            spelling=Counter(readings[index][0] for index in indices)
+            if canonical not in spelling:continue
+            for index in indices:
+                if core.key(rows[index]['text'])==canonical:continue
+                rows[index].setdefault('primary_text',rows[index]['text'])
+                rows[index]['text']=canonical
+                rows[index]['confidence']=max(rows[index]['confidence'],.5)
+                rows[index]['image_verified']=True
+                rows[index]['held_caption_verified']=True
+                repaired+=1
+    return repaired
+
+
+def refine_short_multiline_openings(rows,path,meta,roi):
+    """Repair a brief OCR slip in one line of a two-line held caption.
+
+    The longer observed reading only becomes the replacement if the disputed
+    glyph itself has the same pixels before and after the OCR text switch.
+    This leaves genuine short on-screen word changes as separate subtitles.
+    """
+    import av
+    import subtitle_ocr as core
+    from video_crops import FrameCropper
+    runs=_runs(rows);candidates=[]
+    def observed(row):
+        lines=[line for line in row.get('ocr',{}).get('lines',[])
+               if line.get('candidates') and line['candidates'][0].get('confidence',0)>=.5]
+        if len(lines)!=2:return None
+        lines.sort(key=lambda line:line['box'][1]+line['box'][3]/2)
+        values=[core.normalize(line['candidates'][0]['text']) for line in lines]
+        if core.key('\n'.join(values))!=core.key(row['text']):return None
+        return values,lines
+    for n,(reading,start,end) in enumerate(runs):
+        if (not reading or end-start<3 or
+                not .08<=rows[end-1]['end']-rows[start]['start']<=.30):continue
+        first=observed(rows[start])
+        if first is None:continue
+        first_values,first_lines=first
+        later={};limit=rows[end-1]['end']+2.0
+        for index in range(end,len(rows)):
+            row=rows[index]
+            if row['start']>limit or row['start']-rows[index-1]['end']>.06 or not row['text']:
+                break
+            item=observed(row)
+            if item is None:continue
+            values,lines=item
+            changed=[part for part in (0,1) if values[part]!=first_values[part]]
+            if len(changed)!=1:continue
+            part=changed[0]
+            if (_single_glyph_disagreement(first_values[part],values[part]) is None or
+                    values[1-part]!=first_values[1-part]):continue
+            entry=later.setdefault(tuple(values),[]);entry.append(index)
+        if not later:continue
+        replacement,indices=max(later.items(),key=lambda item:len(item[1]))
+        if len(indices)<max(8,(end-start)*2):continue
+        part=next(part for part in (0,1) if replacement[part]!=first_values[part])
+        disagreement=_single_glyph_disagreement(first_values[part],replacement[part])
+        if disagreement is None:continue
+        candidates.append((start,end,indices[len(indices)//2],part,first_values[part],
+                           '\n'.join(replacement),disagreement))
+    if not candidates:return 0
+    cropper=FrameCropper(roi);repaired=0
+    with av.open(str(path)) as container:
+        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
+        for start,end,reference,part,old_text,new_text,disagreement in candidates:
+            core.control.check()
+            source=start+(end-start)//2
+            images={index:cropper.crop(frame) for index,frame in
+                    _needed_frames(container,stream,rows,[source,reference],meta)}
+            if len(images)!=2:continue
+            before=observed(rows[source]);after=observed(rows[reference])
+            if before is None or after is None:continue
+            pairs=[]
+            for index,item in ((source,before),(reference,after)):
+                line=item[1][part]
+                pairs.append(({'ocr':{'lines':[line]}},images[index]))
+            if not _glyph_region_match(pairs[0],pairs[1],old_text,disagreement):continue
+            for index in range(start,end):
+                rows[index].setdefault('primary_text',rows[index]['text'])
+                rows[index]['text']=new_text
+                rows[index]['confidence']=max(.5,rows[index]['confidence'])
+                rows[index]['image_verified']=True
+                repaired+=1
+    return repaired
+
+
+def refine_combining_mark_variants(rows,path,meta,roi):
+    """Join a held caption split solely by an OCR combining-mark omission.
+
+    Thai and other combining-script diacritics can disappear from OCR when a
+    scene cuts behind unchanged subtitles. Both sides must contain the same
+    source glyphs in the disputed character region; a real mark change stays
+    split. The chosen spelling was observed on the source frames, never made
+    up from a language model.
+    """
+    import av
+    import subtitle_ocr as core
+    from video_crops import FrameCropper
+
+    runs=_runs(rows);candidates=[]
+    for left,right in zip(runs,runs[1:]):
+        first,start,middle=left;second,other,end=right
+        if (not first or not second or other!=middle or
+                middle-start<3 or end-other<8 or
+                not .08<=rows[middle-1]['end']-rows[start]['start']<=.30 or
+                rows[end-1]['end']-rows[start]['start']>3.0 or
+                rows[other]['start']-rows[middle-1]['end']>.06 or
+                not core._same_caption_geometry(rows[start:middle],rows[other:end])):
+            continue
+        disagreement=_single_glyph_disagreement(first,second)
+        if disagreement is None or len(first)==len(second):continue
+        edits=[part for part in SequenceMatcher(None,first,second,autojunk=False).get_opcodes()
+               if part[0]!='equal']
+        if len(edits)!=1 or edits[0][0] not in ('insert','delete'):continue
+        if (len(first.splitlines())!=1 or len(second.splitlines())!=1):continue
+        candidates.append((start,middle,other,end,first,second,disagreement))
+    if not candidates:return 0
+    cropper=FrameCropper(roi);repaired=0
+    with av.open(str(path)) as container:
+        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
+        for start,middle,other,end,first,second,disagreement in candidates:
+            core.control.check()
+            anchors=(start+(middle-start)//2,
+                     other+(end-other)//2,end-1)
+            images={index:cropper.crop(frame) for index,frame in
+                    _needed_frames(container,stream,rows,anchors,meta)}
+            if len(images)!=len(anchors):continue
+            pairs=[]
+            for index in anchors:
+                lines=[line for line in rows[index].get('ocr',{}).get('lines',[])
+                       if line.get('candidates')]
+                if len(lines)!=1:break
+                pairs.append(({'ocr':{'lines':lines}},images[index]))
+            if len(pairs)!=3 or not all(
+                    _glyph_region_match(pairs[0],pair,first,disagreement)
+                    for pair in pairs[1:]):continue
+            # A missing combining mark is a common OCR omission. This merely
+            # selects one of two observed readings after confirming identical
+            # physical glyphs; it is not a claim of character-level certainty.
+            spelling=first if len(first)>len(second) else second
+            for index in range(start,end):
+                if core.key(rows[index]['text'])==spelling:continue
+                rows[index].setdefault('primary_text',rows[index]['text'])
+                rows[index]['text']=spelling
+                rows[index]['confidence']=max(.5,rows[index]['confidence'])
+                rows[index]['image_verified']=True
+                repaired+=1
+    return repaired
 
 
 def _needed_frames(container,stream,rows,needed,meta):
@@ -173,8 +631,14 @@ def _letters(text):
     return ''.join(char.casefold() for char in unicodedata.normalize('NFC',text) if char.isalnum())
 
 
+def _protected_for_visual_check(left,right):
+    """A punctuation OCR slip may be checked against pixels, never text alone."""
+    import subtitle_ocr as core
+    return core._protected_text_change(left,right) and _letters(left)!=_letters(right)
+
+
 def _single_glyph_disagreement(left, right):
-    """Locate one OCR glyph substitution in an otherwise long held line."""
+    """Locate one OCR glyph substitution or omitted combining mark."""
     import subtitle_ocr as core
     if (not left or not right or '\n' in left+right or min(len(left),len(right))<12 or
             core._protected_text_change(left,right)):
@@ -183,8 +647,11 @@ def _single_glyph_disagreement(left, right):
            SequenceMatcher(None,left,right,autojunk=False).get_opcodes() if tag!='equal']
     if len(edits)!=1:return None
     tag,a,b,c,d=edits[0]
-    if (tag!='replace' or b-a!=1 or d-c!=1 or
-            not left[a].isalnum() or not right[c].isalnum()):return None
+    replacement=(tag=='replace' and b-a==1 and d-c==1 and
+                 left[a].isalnum() and right[c].isalnum())
+    combining_slip=(tag=='delete' and b-a==1 and unicodedata.combining(left[a])) or\
+                   (tag=='insert' and d-c==1 and unicodedata.combining(right[c]))
+    if not (replacement or combining_slip):return None
     return a,b
 
 
@@ -323,8 +790,10 @@ def refine(rows,path,meta,roi,pool=None,_pass=0):
         for row_index in indices:
             needed.setdefault(rows[row_index]['frame'],[]).append((candidate_index,row_index))
         item['masks']={}
-    cropper=FrameCropper(roi);repaired=0;secondary=None
+        item['suspect_crops']={}
+    cropper=FrameCropper(roi);repaired=0;secondary=None;completed=0
     core.control.emit('phase',phase=f'核验 {len(candidates)} 处短时字幕画面')
+    core.control.emit('verify_progress',done=0,total=len(candidates),base=.90,span=.06)
     with av.open(str(path)) as container, ExitStack() as cleanup:
         def independent_score(crop, reference, variant):
             nonlocal secondary
@@ -357,6 +826,8 @@ def refine(rows,path,meta,roi,pool=None,_pass=0):
             h,w=mask.shape
             for candidate_index,row_index in needed[frame_index]:
                 item=candidates[candidate_index]
+                if row_index in item['suspects']:
+                    item['suspect_crops'][row_index]=crop
                 bounds=([item['bounds']] if item['kind']=='substitution' else
                         [anchor[2] for anchor in item['anchors']])
                 item['masks'][row_index]=[
@@ -374,7 +845,7 @@ def refine(rows,path,meta,roi,pool=None,_pass=0):
                         replacement=item['reference'] if matching else None
                         confidence=min(rows[item['left']]['confidence'],rows[item['right']]['confidence'])
                         if replacement is None:
-                            score=independent_score(crop,item['reference'],rows[i]['text'])
+                            score=independent_score(item['suspect_crops'][i],item['reference'],rows[i]['text'])
                             if score is not None:replacement=item['reference'];confidence=score
                     else:
                         matches=[(text,rows[index]['confidence'])
@@ -386,7 +857,7 @@ def refine(rows,path,meta,roi,pool=None,_pass=0):
                         confidence=min((score for _,score in matches),default=0)
                         if replacement is None and item.get('bracketed_text'):
                             reference=item['bracketed_text']
-                            score=independent_score(crop,reference,rows[i]['text'])
+                            score=independent_score(item['suspect_crops'][i],reference,rows[i]['text'])
                             if score is not None:replacement=reference;confidence=score
                     if replacement is None:continue
                     row=rows[i]
@@ -397,6 +868,11 @@ def refine(rows,path,meta,roi,pool=None,_pass=0):
                     row['visual_consensus']=True
                     repaired+=1
                 item['masks'].clear()
+                item['suspect_crops'].clear()
+                completed+=1
+                if completed%max(1,len(candidates)//20)==0 or completed==len(candidates):
+                    core.control.emit('verify_progress',done=completed,total=len(candidates),
+                                      base=.90,span=.06)
     # An initially empty stretch can gain a short OCR-backed edge during this
     # pass. Rebuild candidates once so the remaining held frames are checked
     # against the newly established anchors; never fill by inference alone.

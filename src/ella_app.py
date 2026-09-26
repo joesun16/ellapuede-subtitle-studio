@@ -819,7 +819,10 @@ class MainWindow(QMainWindow):
             self.queue_model.notify({self.active['id']})
             if self.active['status'] not in {'pausing','stopping','paused'}:self.phase_label.setText(f'{Path(self.active["source"]).name} · 已扫描 {e["seconds"] / max(.001,e["duration"]):.0%}'+eta+f' · 全部 {done}/{len(self.jobs)} 集已导出')
         elif kind=='verify_progress':
-            self.active['work_fraction']=max(self.active.get('work_fraction',0),.8+.18*e['done']/max(1,e['total']))
+            self.last_progress=time.monotonic();self.stage_started=self.last_progress
+            base=float(e.get('base',.8));span=float(e.get('span',.18))
+            self.active['work_fraction']=max(self.active.get('work_fraction',0),
+                                             base+span*e['done']/max(1,e['total']))
             self.active['phase']=f'复核画面 {e["done"]}/{e["total"]}'
             self.queue_model.notify({self.active['id']});self.update_project_progress()
             if self.active['status'] not in {'pausing','stopping','paused'}:

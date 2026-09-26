@@ -174,6 +174,13 @@ class ProjectUiTests(unittest.TestCase):
         self.w.handle_event({'type':'verify_progress','done':5,'total':10})
         self.assertEqual(self.w.progress.value(),630)
         self.assertIn('复核画面 5/10',self.w.phase_label.text())
+        self.assertGreaterEqual(self.w.last_progress,self.w.job_started)
+        self.w.handle_event({'type':'verify_progress','done':10,'total':10,
+                             'base':.8,'span':.10})
+        after_first_pass=self.w.progress.value()
+        self.w.handle_event({'type':'verify_progress','done':5,'total':10,
+                             'base':.90,'span':.06})
+        self.assertGreater(self.w.progress.value(),after_first_pass)
         self.w.active=None
 
     def test_stop_status_is_not_overwritten_by_inflight_worker_events(self):
