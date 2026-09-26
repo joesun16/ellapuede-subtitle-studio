@@ -4,7 +4,7 @@
 
 **从视频画面提取已经烧录的对白字幕，按原视频文件名导出 SRT / ASS。**
 
-[下载安装包](https://github.com/joesun16/ellapuede-subtitle-studio/releases/latest) · [使用指南](docs/USER-GUIDE.md) · [命令行与集成](docs/CLI.md) · [已知限制](docs/QUALITY.md) · [English](#english)
+[下载安装包](https://github.com/joesun16/ellapuede-subtitle-studio/releases/tag/v0.14.6) · [使用指南](docs/USER-GUIDE.md) · [命令行与集成](docs/CLI.md) · [已知限制](docs/QUALITY.md) · [English](#english)
 
 > **0.14.6 公测版。** Mac Apple Silicon 与 Windows x64 使用同一版源码，安装包内置运行时与 OCR 模型。安装后处理视频无需联网。现阶段不承诺“100 分钟视频 5–10 分钟完成”或任何语言的零错误识别。
 
@@ -21,7 +21,7 @@
 
 ## 下载安装
 
-在 [GitHub Releases](https://github.com/joesun16/ellapuede-subtitle-studio/releases/latest) 获取：
+在 [GitHub Releases](https://github.com/joesun16/ellapuede-subtitle-studio/releases/tag/v0.14.6) 获取：
 
 | 系统 | 文件 | 安装方式 |
 |---|---|---|
@@ -65,4 +65,4 @@ python launch.py
 
 ## English
 
-EllaPuede extracts **existing burned-in dialogue subtitles from video frames** and exports same-basename SRT/ASS files. Select the subtitle region once for a series, choose the source language and output format, then process episodes offline in a batch. It is not speech-to-text, translation, or a promise of error-free OCR. Version 0.14.6 is a beta for macOS Apple Silicon and Windows x64. See the [release](https://github.com/joesun16/ellapuede-subtitle-studio/releases/latest), [user guide](docs/USER-GUIDE.md), and [quality limits](docs/QUALITY.md).
+EllaPuede extracts **existing burned-in dialogue subtitles from video frames** and exports same-basename SRT/ASS files. Select the subtitle region once for a series, choose the source language and output format, then process episodes offline in a batch. It is not speech-to-text, translation, or a promise of error-free OCR. Version 0.14.6 is a beta for macOS Apple Silicon and Windows x64. See the [release](https://github.com/joesun16/ellapuede-subtitle-studio/releases/tag/v0.14.6), [user guide](docs/USER-GUIDE.md), and [quality limits](docs/QUALITY.md).

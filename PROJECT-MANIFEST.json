@@ -80,11 +80,12 @@
   "integration_guide": "docs/CLI.md",
   "source_import_record": null,
   "repository": "https://github.com/joesun16/ellapuede-subtitle-studio",
-  "release_source_commit": null,
+  "release_source_commit": "dd923fc7c547a9ccec2da3f9a2ff06fc17a31460",
   "release_tag": "v0.14.6",
-  "release_ci_run": null,
+  "release_ci_run": "https://github.com/joesun16/ellapuede-subtitle-studio/actions/runs/36232023204",
   "installer_manifest": "docs/RELEASE-ASSETS-0.14.6.json",
   "development_status": "0.14.6 / build 34 公测；图像字形核验修复韩语重复拆条；多语种真值与长视频速度限制见 docs/QUALITY.md",
   "development_report": "docs/QUALITY.md",
-  "operation_model": "docs/USER-GUIDE.md"
+  "operation_model": "docs/USER-GUIDE.md",
+  "release_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/tag/v0.14.6"
 }

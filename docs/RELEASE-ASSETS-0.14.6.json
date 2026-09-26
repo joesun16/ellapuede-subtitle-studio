@@ -1,13 +1,38 @@
 {
   "product": "EllaPuede 字幕提取工具",
   "version": "0.14.6",
-  "build": "34",
+  "build": 34,
+  "status": "公测",
   "release_tag": "v0.14.6",
-  "status": "同源构建与哈希核验中",
-  "platforms": [
-    "macos-arm64",
-    "windows-x64"
+  "release_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/tag/v0.14.6",
+  "source_commit_public": "dd923fc7c547a9ccec2da3f9a2ff06fc17a31460",
+  "ci_run": "https://github.com/joesun16/ellapuede-subtitle-studio/actions/runs/36232023204",
+  "ci_result": "macos-14 / windows-latest both success; Windows installer installed, offline OCR and export smoked, uninstalled",
+  "files": [
+    {
+      "name": "EllaPuede-0.14.6-Windows-x64-Setup.exe",
+      "bytes": 227561664,
+      "sha256": "ee61fb08b40b0fc9d50c6f01e9ff86e3701fa90aaf7c65312e2d225aba2567ab",
+      "download_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.6/EllaPuede-0.14.6-Windows-x64-Setup.exe"
+    },
+    {
+      "name": "EllaPuede-0.14.6-macOS-AppleSilicon.dmg",
+      "bytes": 270163640,
+      "sha256": "bd1e2fb33bbaa2a072322fc22e25065bcd52cd76dea11e1edd304407b9cf13d5",
+      "download_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.6/EllaPuede-0.14.6-macOS-AppleSilicon.dmg"
+    },
+    {
+      "name": "EllaPuede-0.14.6-macOS-AppleSilicon-Installer.pkg",
+      "bytes": 253742282,
+      "sha256": "ae2a3737637120f4ca190d755b600cfa7264c4ee7d6d0963b177e1e3e538e4b9",
+      "download_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.6/EllaPuede-0.14.6-macOS-AppleSilicon-Installer.pkg"
+    }
   ],
-  "checks": "本地 214 项回归；Mac 安装包及 Windows CI 安装/运行/卸载以最终记录为准",
-  "files": []
+  "limitations": [
+    "无公司代码签名及 Apple 公证",
+    "Windows 多机型整剧、各语言人工逐帧真值未验收",
+    "仍有片头画面误收，不能保证所有视频 100% 正确",
+    "100 分钟 5–10 分钟速度目标未达"
+  ],
+  "checksum_file_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.6/SHA256SUMS.txt"
 }
