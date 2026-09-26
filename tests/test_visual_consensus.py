@@ -4,7 +4,9 @@ import tempfile
 
 import numpy as np
 
-from visual_consensus import _similar_mask, _similar_gap_mask, targets, refine
+from visual_consensus import (_similar_mask, _similar_gap_mask,
+                              _single_glyph_disagreement, _glyph_region_match,
+                              refine_recurrent_variant, targets, refine)
 
 
 def row(i,text):
@@ -33,15 +35,61 @@ class VisualConsensusTests(unittest.TestCase):
         self.assertTrue(_similar_mask(mask('He drove the car'),mask('He drove the car')))
         self.assertFalse(_similar_mask(mask('He drove the car'),mask('He drove the cat')))
 
+    def test_recurrent_long_caption_requires_same_disputed_glyph_pixels(self):
+        from PIL import Image,ImageDraw,ImageFont
+        font=ImageFont.load_default(size=26)
+        left,right='He drove the car','He drove the cat'
+        def observed(text):
+            image=Image.new('RGB',(480,270),(40,35,30))
+            ImageDraw.Draw(image).text((65,190),text,font=font,fill='white',
+                                       stroke_width=2,stroke_fill='black')
+            data={'text':text,'ocr':{'lines':[{'box':[.135,.73,.415,.08],
+                   'candidates':[{'text':text,'confidence':.9}]}]}}
+            return data,image
+        changed=_single_glyph_disagreement(left,right)
+        self.assertEqual(changed,(15,16))
+        self.assertTrue(_glyph_region_match(observed(left),observed(left),left,changed))
+        self.assertFalse(_glyph_region_match(observed(left),observed(right),left,changed))
+
+    def test_recurrent_word_change_respects_actual_video_pixels(self):
+        import av
+        from PIL import Image,ImageDraw,ImageFont
+        import subtitle_ocr as core
+        left,right='He drove the car','He drove the cat'
+        readings=[left]*10+[right]*2+[left]*2+[right]*20
+        font=ImageFont.load_default(size=26)
+        class NoSecondReading:
+            def recognize(self,image):return {'lines':[]}
+        with tempfile.TemporaryDirectory() as directory:
+            for actual_change in (False,True):
+                path=Path(directory)/('changed.mkv' if actual_change else 'held.mkv')
+                with av.open(str(path),'w') as output:
+                    stream=output.add_stream('ffv1',rate=25)
+                    stream.width=480;stream.height=270;stream.pix_fmt='yuv420p'
+                    for text in readings:
+                        image=Image.new('RGB',(480,270),(40,35,30))
+                        ImageDraw.Draw(image).text((65,190),text if actual_change else left,
+                                                   font=font,fill='white',stroke_width=2,
+                                                   stroke_fill='black')
+                        for packet in stream.encode(av.VideoFrame.from_image(image)):
+                            output.mux(packet)
+                    for packet in stream.encode():output.mux(packet)
+                rows=[row(i,text) for i,text in enumerate(readings)]
+                for item in rows:item['ocr']['lines'][0]['box']=[.135,.73,.415,.08]
+                repaired=refine_recurrent_variant(rows,path,core.probe(path),
+                                                  (0,0,1,1),NoSecondReading())
+                self.assertEqual(bool(repaired),not actual_change)
+                self.assertEqual(len(core.make_segments(rows)),4 if actual_change else 1)
+
     def test_bracketed_substitution_is_candidate_for_image_check(self):
-        rows=[row(i,'오늘 좋아!' if i<6 or i>=8 else '오널 좋아!') for i in range(14)]
+        rows=[row(i,'뭣들 해!' if i<6 or i>=8 else '윗들 해!') for i in range(14)]
         found=targets(rows)
         self.assertEqual(len(found),1)
         self.assertEqual(found[0]['suspects'],[6,7])
-        self.assertEqual(found[0]['reference'],'오늘 좋아!')
+        self.assertEqual(found[0]['reference'],'뭣들 해!')
 
     def test_bracketed_partial_reading_also_gets_image_check(self):
-        rows=[row(i,'오늘 갑니다' if i!=6 else '오늘') for i in range(13)]
+        rows=[row(i,'뭐 어쨌든' if i!=6 else '뭐') for i in range(13)]
         self.assertEqual(targets(rows)[0]['suspects'],[6])
 
     def test_one_frame_unrelated_ocr_glyph_is_checked_against_pixels(self):

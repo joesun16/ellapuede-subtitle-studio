@@ -7,7 +7,9 @@ on both sides of the suspect frame, and the subtitle pixels must agree.
 from __future__ import annotations
 
 from contextlib import ExitStack
+from collections import Counter
 from difflib import SequenceMatcher
+import unicodedata
 
 import numpy as np
 
@@ -169,6 +171,140 @@ def _letters(text):
     """Compare independent OCR words despite uncertain terminal punctuation."""
     import unicodedata
     return ''.join(char.casefold() for char in unicodedata.normalize('NFC',text) if char.isalnum())
+
+
+def _single_glyph_disagreement(left, right):
+    """Locate one OCR glyph substitution in an otherwise long held line."""
+    import subtitle_ocr as core
+    if (not left or not right or '\n' in left+right or min(len(left),len(right))<12 or
+            core._protected_text_change(left,right)):
+        return None
+    edits=[(tag,a,b,c,d) for tag,a,b,c,d in
+           SequenceMatcher(None,left,right,autojunk=False).get_opcodes() if tag!='equal']
+    if len(edits)!=1:return None
+    tag,a,b,c,d=edits[0]
+    if (tag!='replace' or b-a!=1 or d-c!=1 or
+            not left[a].isalnum() or not right[c].isalnum()):return None
+    return a,b
+
+
+def _glyph_region_match(first, second, left, disagreement):
+    """Compare the changed glyph's actual pixels, not OCR edit distance."""
+    from frame_features import text_mask
+    boxes=[]
+    for row in (first[0],second[0]):
+        lines=row.get('ocr',{}).get('lines',[])
+        if len(lines)!=1 or not lines[0].get('candidates'):return False
+        boxes.append(lines[0]['box'])
+    if not all(abs(boxes[0][i]-boxes[1][i])<(.055 if i in (0,2) else .09)
+               for i in range(4)):return False
+    width=first[1].width;height=first[1].height
+    if second[1].size!=first[1].size:return False
+    x=min(box[0] for box in boxes);y=min(box[1] for box in boxes)
+    w=max(box[0]+box[2] for box in boxes)-x
+    bottom=max(box[1]+box[3] for box in boxes)
+    def weight(char):
+        if unicodedata.combining(char):return 0
+        if char.isspace():return .42
+        return 1 if unicodedata.east_asian_width(char) in ('W','F') else .62
+    total=sum(map(weight,left))
+    if total<=0:return False
+    a,b=disagreement;before=sum(map(weight,left[:a]));after=sum(map(weight,left[:b]))
+    margin=max(1,total/len(left))
+    x1=max(0,round((x+w*max(0,(before-margin)/total))*width))
+    x2=min(width,round((x+w*min(1,(after+margin)/total))*width))
+    y1=max(0,round((y-.015)*height));y2=min(height,round((bottom+.015)*height))
+    if x2-x1<12 or y2-y1<8:return False
+    masks=[text_mask(image)[y1:y2,x1:x2] for _,image in (first,second)]
+    common=np.count_nonzero(masks[0]&masks[1])
+    smaller=min(np.count_nonzero(mask) for mask in masks)
+    union=np.count_nonzero(masks[0]|masks[1])
+    return smaller>=65 and common/smaller>=.985 and common/union>=.85
+
+
+def refine_recurrent_variant(rows,path,meta,roi,pool):
+    """Resolve A/B/A/B OCR readings only after verifying the changed glyph.
+
+    A real subtitle word change can make the same text pattern. The video
+    pixels in the disputed character must match before one cue is exported.
+    """
+    import subtitle_ocr as core
+    runs=_runs(rows);repaired=0;last_end=0
+    for n in range(len(runs)-3):
+        a,b,c,d=runs[n:n+4]
+        if a[1]<last_end or not (a[0] and a[0]==c[0] and b[0] and b[0]==d[0] and a[0]!=b[0]):continue
+        disagreement=_single_glyph_disagreement(a[0],b[0])
+        if disagreement is None:continue
+        duration=lambda run:rows[run[2]-1]['end']-rows[run[1]]['start']
+        if (duration(a)<.20 or duration(b)>.18 or duration(c)>.18 or
+                duration(d)<.24 or rows[d[2]-1]['end']-rows[a[1]]['start']>3.5):continue
+        if not all(rows[right[1]]['start']-rows[left[2]-1]['end']<=.08
+                   for left,right in ((a,b),(b,c),(c,d))):continue
+        if not core._same_caption_geometry(rows[a[1]:a[2]],rows[d[1]:d[2]]):continue
+        # Use frames that independently produced the two readings. A changed
+        # scene behind an unchanged subtitle is fine; a changed glyph is not.
+        ia=max(range(a[1],a[2]),key=lambda i:rows[i]['confidence'])
+        ib=max(range(d[1],d[2]),key=lambda i:rows[i]['confidence'])
+        images=[]
+        for index in (ia,ib):
+            core.control.check()
+            frame=core.frame_at(path,meta,rows[index]['start'])
+            images.append((rows[index],core.image_crop(frame,roi,1)))
+        if not _glyph_region_match(images[0],images[1],a[0],disagreement):continue
+        # Remove the changing scene behind the *observed* outlined glyphs,
+        # then read that real image evidence twice. This recovers a Korean
+        # syllable that the same OCR model misreads when clothing changes.
+        # Never form a word from a dictionary or accept text absent from OCR.
+        from PIL import Image
+        from frame_features import text_mask
+        samples=list(images)
+        for run,chosen in ((a,ia),(d,ib)):
+            alternatives=sorted((index for index in range(run[1],run[2]) if index!=chosen),
+                                key=lambda index:rows[index]['confidence'],reverse=True)
+            if alternatives:
+                distant=next((index for index in alternatives
+                              if abs(rows[index]['start']-rows[chosen]['start'])>=.12),
+                             alternatives[0])
+                frame=core.frame_at(path,meta,rows[distant]['start'])
+                samples.append((rows[distant],core.image_crop(frame,roi,1)))
+        masked=[]
+        for row,image in samples:
+            binary=np.where(text_mask(image),255,0).astype(np.uint8)
+            clean=Image.fromarray(binary,'L').convert('RGB')
+            clean.info['ellapuede_dialogue_crop']=True
+            text,score=core.read_lines(pool.recognize(clean))
+            masked.append((core.key(text),score))
+        masked_votes=Counter(text for text,score in masked
+                             if text in (a[0],b[0]) and score>=.80)
+        winner,count=masked_votes.most_common(1)[0] if masked_votes else ('',0)
+        if count>=2 and count>masked_votes.get(b[0] if winner==a[0] else a[0],0):
+            canonical=winner
+        else:
+            # A second rasterization can still select between the two words
+            # actually seen in the source frames; ties keep the longer run.
+            scores={a[0]:[],b[0]:[]}
+            for row,image in images:
+                text,score=core.read_lines(pool.recognize(image))
+                if core.key(text) in scores:scores[core.key(text)].append(score)
+            first_score=max(scores[a[0]],default=0)
+            second_score=max(scores[b[0]],default=0)
+            canonical=a[0] if first_score>second_score+.02 else b[0]
+        end=d[2]
+        visible=lambda value:''.join(core.key(value).split()).casefold()
+        while end<len(rows) and visible(rows[end]['text'])==visible(b[0]):
+            if (rows[end]['start']-rows[end-1]['end']>.08 or
+                    rows[end]['end']-rows[a[1]]['start']>3.5 or
+                    not core._same_caption_geometry(rows[d[1]:d[2]],rows[end:end+1])):
+                break
+            end+=1
+        for row in rows[a[1]:end]:
+            if core.key(row['text'])!=canonical:
+                row.setdefault('primary_text',row['text'])
+                row['text']=canonical;row['image_verified']=True
+                row['visual_consensus']=True;row['recurrent_variant']=True
+                repaired+=1
+        last_end=end
+    return repaired
 
 
 def refine(rows,path,meta,roi,pool=None,_pass=0):

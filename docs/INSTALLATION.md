@@ -1,6 +1,6 @@
 # 安装与卸载
 
-从 [0.14.4 Release](https://github.com/joesun16/ellapuede-subtitle-studio/releases/tag/v0.14.4) 下载适合系统的文件，并与 Release 中的 SHA-256 清单核对。安装包内含 Python 运行时、OCR 模型和所需组件；识别视频时不需联网。
+从 [0.14.5 Release](https://github.com/joesun16/ellapuede-subtitle-studio/releases/tag/v0.14.5) 下载适合系统的文件，并与 Release 中的 SHA-256 清单核对。安装包内含 Python 运行时、OCR 模型和所需组件；识别视频时不需联网。
 
 ## macOS Apple Silicon
 
@@ -10,7 +10,7 @@
 
 ## Windows x64
 
-运行 `EllaPuede-0.14.4-Windows-x64-Setup.exe`，按安装向导完成安装；可通过系统“已安装的应用”卸载。安装包目前没有公司代码签名，系统可能显示发布者验证提示，请先核对来源和 SHA-256。Windows ARM 原生包尚未提供；GPU 加速会按硬件能力测试与回退，不作速度承诺。
+运行 `EllaPuede-0.14.5-Windows-x64-Setup.exe`，按安装向导完成安装；可通过系统“已安装的应用”卸载。安装包目前没有公司代码签名，系统可能显示发布者验证提示，请先核对来源和 SHA-256。Windows ARM 原生包尚未提供；GPU 加速会按硬件能力测试与回退，不作速度承诺。
 
 ## 从源码构建
 

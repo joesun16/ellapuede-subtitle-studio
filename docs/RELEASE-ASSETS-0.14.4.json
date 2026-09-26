@@ -3,7 +3,7 @@
   "version": "0.14.4",
   "build": "32",
   "release_tag": "v0.14.4",
-  "status": "构建与哈希核验中；发布资产将随后更新",
+  "status": "历史源码标签；安装包发布改为 0.14.5",
   "platforms": [
     "macos-arm64",
     "windows-x64"

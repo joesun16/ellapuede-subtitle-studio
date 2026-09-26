@@ -1,8 +1,8 @@
 {
   "id": "ella-puede-subtitle-studio",
   "name": "EllaPuede 字幕提取工具",
-  "version": "0.14.4",
-  "build": "32",
+  "version": "0.14.5",
+  "build": "33",
   "kind": "desktop-application-source",
   "platforms": [
     "macos-arm64",
@@ -50,7 +50,9 @@
     "independent-short-caption-verification",
     "vision-thai-on-macos15",
     "same-glyph-spacing-compaction",
-    "volatile-observed-caption-compaction"
+    "volatile-observed-caption-compaction",
+    "image-backed-recurrent-glyph-variant-repair",
+    "masked-scene-invariant-ocr-vote"
   ],
   "primary_workflow": "import-series -> select-dialogue-region-once -> choose-language-and-export-format -> run -> same-basename-auto-export",
   "region_policy": "manual-primary; automatic-only-when-explicitly-selected; shared-per-series-with-episode-override",
@@ -79,10 +81,10 @@
   "source_import_record": null,
   "repository": "https://github.com/joesun16/ellapuede-subtitle-studio",
   "release_source_commit": null,
-  "release_tag": "v0.14.4",
+  "release_tag": "v0.14.5",
   "release_ci_run": null,
-  "installer_manifest": "docs/RELEASE-ASSETS-0.14.4.json",
-  "development_status": "0.14.4 / build 32 公测；质量和长视频速度目标见 docs/QUALITY.md",
+  "installer_manifest": "docs/RELEASE-ASSETS-0.14.5.json",
+  "development_status": "0.14.5 / build 33 公测；韩语 Windows 路线图像字形核验，其他质量和长视频速度限制见 docs/QUALITY.md",
   "development_report": "docs/QUALITY.md",
   "operation_model": "docs/USER-GUIDE.md"
 }
