@@ -17,14 +17,14 @@
     },
     {
       "name": "EllaPuede-0.14.6-macOS-AppleSilicon.dmg",
-      "bytes": 270163640,
-      "sha256": "bd1e2fb33bbaa2a072322fc22e25065bcd52cd76dea11e1edd304407b9cf13d5",
+      "bytes": 269867490,
+      "sha256": "2c830cfee1750e259c1ab541d850e1c55707f53bdd8b96a0c387ce3518bea357",
       "download_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.6/EllaPuede-0.14.6-macOS-AppleSilicon.dmg"
     },
     {
       "name": "EllaPuede-0.14.6-macOS-AppleSilicon-Installer.pkg",
-      "bytes": 253742282,
-      "sha256": "ae2a3737637120f4ca190d755b600cfa7264c4ee7d6d0963b177e1e3e538e4b9",
+      "bytes": 253164461,
+      "sha256": "a753b7b705fa2d6a0f394f9de51c62510d11e69d2b640ef9dd77859159294b08",
       "download_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.6/EllaPuede-0.14.6-macOS-AppleSilicon-Installer.pkg"
     }
   ],
@@ -34,5 +34,7 @@
     "仍有片头画面误收，不能保证所有视频 100% 正确",
     "100 分钟 5–10 分钟速度目标未达"
   ],
-  "checksum_file_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.6/SHA256SUMS.txt"
+  "checksum_file_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.14.6/SHA256SUMS.txt",
+  "release_publish_ci_run": "https://github.com/joesun16/ellapuede-subtitle-studio/actions/runs/36232818196",
+  "asset_origin": "成功的同源构建运行 36232023204；发布运行逐项校验 SHA-256 后上传"
 }

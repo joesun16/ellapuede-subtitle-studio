@@ -4,6 +4,6 @@
 
 用户反馈对应的 120.674 秒视频，原 Windows SRT 有 62 条、6 条短于 0.18 秒。同视频在 Mac 上强制 Windows 所用的 RapidOCR 韩语路线，0.14.4 冷缓存为 56 条且问题句拆为 4 条；0.14.6 复用相同帧缓存为 53 条、1 条极短，27.12–29.88 秒问题句为一条，下一句仍从 29.88 秒开始。剩余片头 `T` 是画面误收，泰语样片重跑亦有一次疑点 OCR 读数波动；还不能宣称逐字正确。证据和限制见 [质量说明](QUALITY.md)。
 
-Mac Apple Silicon 提供 DMG 或 PKG，Windows x64 提供 Setup.exe，两端为同一 0.14.6 / build 34 源码。[同源 CI](https://github.com/joesun16/ellapuede-subtitle-studio/actions/runs/36232023204) 两端成功：Windows Setup.exe 通过安装、包内 OCR/导出和卸载检查；Mac 本机安装版另用用户韩语原片复核。安装包内含运行时和 OCR 模型，安装后离线使用。SHA-256 和同源构建结果见 [发布资产清单](RELEASE-ASSETS-0.14.6.json)。两平台尚无公司代码签名，Mac 尚无 Apple 公证。
+Mac Apple Silicon 提供 DMG 或 PKG，Windows x64 提供 Setup.exe，两端为同一 0.14.6 / build 34 源码。[同源 CI](https://github.com/joesun16/ellapuede-subtitle-studio/actions/runs/36232023204) 两端成功：Windows Setup.exe 通过安装、包内 OCR/导出和卸载检查；最终发布的 Mac DMG 在本机挂载后再通过多语种离线 OCR、预览与同名 SRT/ASS 导出检查。Mac 本机安装版另用用户韩语原片复核。安装包内含运行时和 OCR 模型，安装后离线使用。SHA-256 和同源构建结果见 [发布资产清单](RELEASE-ASSETS-0.14.6.json)。两平台尚无公司代码签名，Mac 尚无 Apple 公证。
 
 公开仓库不含内部 Git 历史、用户视频字幕或本机路径。自有代码采用 MIT License，第三方组件依各自许可证。Windows 多机型整剧、各语言逐帧人工真值和 100 分钟 5–10 分钟目标仍未验收，保持公测标识。
