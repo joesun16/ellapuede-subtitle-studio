@@ -1,0 +1,24 @@
+name: 功能建议 / Feature request
+description: 提出与画面对白字幕提取有关的改进
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 当前遇到的问题
+      description: "描述实际工作流和阻碍，不需先设计实现。"
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 希望得到的结果
+      description: "说明如何判断改进有效；性能建议请同时考虑字幕完整度。"
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: 示例或限制
+      description: "请仅提供有权公开的示例。"

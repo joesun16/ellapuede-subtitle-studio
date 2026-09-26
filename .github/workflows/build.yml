@@ -1,0 +1,55 @@
+name: Build EllaPuede installers
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+env:
+  PYTHONUTF8: '1'
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r requirements-desktop.txt pyinstaller==6.17.0
+      - run: python -m unittest discover -s tests -t . -p "test_*.py" -v
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: python tools/build.py
+      - name: Locate installer compiler on Windows runner
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $compiler)) { throw "Runner requires official Inno Setup 6" }
+          "ISCC_PATH=$compiler" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - run: python tools/package_installers.py
+      - name: macOS packaged offline OCR smoke check
+        if: runner.os == 'macOS'
+        run: python tools/smoke_packaged.py dist/EllaPuede.app/Contents/MacOS/EllaPuedeWorker dist/EllaPuede.app/Contents/Resources/models
+      - name: Windows installer smoke check
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP "EllaPuede smoke"
+          $installer = Get-ChildItem installers/*Setup.exe | Select-Object -First 1
+          $process = Start-Process $installer.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$destination`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer failed" }
+          & "$destination/EllaPuedeWorker.exe" --worker --help
+          if ($LASTEXITCODE -ne 0) { throw "Packaged worker failed" }
+          python tools/smoke_packaged.py "$destination/EllaPuedeWorker.exe" "$destination/_internal/models"
+          if ($LASTEXITCODE -ne 0) { throw "Offline OCR smoke check failed" }
+          $process = Start-Process "$destination/unins000.exe" -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Uninstall failed" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EllaPuede-${{ matrix.os }}-unsigned-installers
+          path: installers/

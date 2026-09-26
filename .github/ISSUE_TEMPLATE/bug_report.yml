@@ -1,0 +1,41 @@
+name: 错误报告 / Bug report
+description: 报告可复现的崩溃、识别、时间轴或导出问题
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "请勿上传未经授权的视频/字幕、个人路径或令牌。安全漏洞请使用私密漏洞报告。"
+  - type: input
+    id: version
+    attributes:
+      label: EllaPuede 版本
+      placeholder: "0.14.3 / build 31"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: 操作系统与硬件
+      placeholder: "macOS Apple Silicon / Windows x64、内存、CPU/GPU"
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: 问题类型
+      options: [崩溃, OCR 文字, 时间轴或重复, 框选预览, 安装或启动, 导出, 性能, 其他]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重现步骤与预期结果
+      placeholder: "使用合成或有权公开的素材，注明区域、语言、模式、格式、视频时长与发生时间点。"
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 可公开的证据
+      description: "可附去除私人信息的日志、截图、短合成视频或字幕片段。"
