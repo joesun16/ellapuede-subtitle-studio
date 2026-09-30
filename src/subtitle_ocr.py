@@ -483,8 +483,9 @@ def probe(path):
 
 def frame_at(path, meta, seconds):
     import av
+    from video_crops import configure_decoder
     with av.open(str(path)) as c:
-        s = c.streams[meta['stream_index']]
+        s = configure_decoder(c.streams[meta['stream_index']])
         target = seconds + meta['origin']
         c.seek(int(target / float(s.time_base)), stream=s, backward=True)
         for f in c.decode(s):
@@ -869,6 +870,11 @@ def verify_single_frame_glyphs(events, rows, path, meta, roi):
     from dialogue_filter import line_mask_density
     from frame_features import text_mask
 
+    suspects=[event for event in events if event.get('frames')==1 and
+              event.get('end',0)-event.get('start',0)<.10 and
+              sum(character.isalnum() for character in event['text'])<=2 and
+              event.get('confidence',1)<.72]
+    if not suspects:return 0
     by_frame={row['frame']:row for row in rows if row.get('ocr',{}).get('lines')}
 
     def density(event):
@@ -891,11 +897,7 @@ def verify_single_frame_glyphs(events, rows, path, meta, roi):
         if value is not None:baseline.append(value)
     if len(baseline)<3 or median(baseline)<.03:return 0
     rejected=0
-    for event in events:
-        if not (event.get('frames')==1 and
-                event.get('end',0)-event.get('start',0)<.10 and
-                sum(character.isalnum() for character in event['text'])<=2 and
-                event.get('confidence',1)<.72):continue
+    for event in suspects:
         control.check()
         try:value=density(event)
         except (OSError,ValueError):continue
@@ -955,7 +957,16 @@ def exclude_off_band_graphics(events, calibration):
         if reason is None and glyph and bottom is not None and calibrated:
             height=glyph*(roi[3]-roi[1])
             cy=roi[1]+(bottom-glyph/2)*(roi[3]-roi[1])
-            if height>font*1.55 or (height>font*1.25 and abs(cy-center)>max(.035,font*.75)):
+            # Sparse full-frame calibration and cropped OCR can report different
+            # box heights for the same font. A centered line whose baseline and
+            # size agree with the sustained dialogue learned from THIS scan
+            # must not be deleted by calibration size alone.
+            fits_scan=False
+            if learned and isinstance(layout.get('center_x'),(int,float)):
+                lx,ly1,ly2,lh=learned
+                fits_scan=(abs(layout['center_x']-lx)<=.08 and
+                           ly1-.04<=bottom<=ly2+.04 and .74*lh<=glyph<=1.65*lh)
+            if not fits_scan and (height>font*1.55 or (height>font*1.25 and abs(cy-center)>max(.035,font*.75))):
                 reason='oversized_or_displaced_graphic'
         if reason is None and learned and glyph and bottom is not None:
             x=layout.get('center_x')
@@ -1273,9 +1284,6 @@ def run_one(path, stem, args, pool):
     print('  整理字幕并自动导出…', flush=True)
     control.emit('phase',phase='整理字幕并自动导出')
     refine_started=time.monotonic()
-    recovered = refine_missing_lines(rows,path,meta,roi,pool,args.scale,args.workers)
-    perf['line_check_seconds']=round(time.monotonic()-refine_started,2)
-    refine_started=time.monotonic()
     from quality_refine import refine
     _,pre_excluded=exclude_off_band_graphics(make_segments(rows),calibration)
     scene_ranges=[event for event in pre_excluded
@@ -1304,6 +1312,12 @@ def run_one(path, stem, args, pool):
     perf['sparse_visible_hold_repairs']=refine_sparse_visible_holds(rows,path,meta,roi,
                                                                     skip_indices=skip_scene)
     perf['visual_consensus_seconds']=round(time.monotonic()-refine_started,2)
+    # Recover missing individual lines after the full-caption checks. Promoting
+    # a partial line earlier can change their reference votes and lose a correct
+    # second line. The line pass also preserves already image-verified repairs.
+    refine_started=time.monotonic()
+    recovered = refine_missing_lines(rows,path,meta,roi,pool,args.scale,args.workers)
+    perf['line_check_seconds']=round(time.monotonic()-refine_started,2)
     events=make_segments(rows)
     perf['image_rejected_glyphs']=verify_single_frame_glyphs(events,rows,path,meta,roi)
     events,excluded_layout_events=exclude_off_band_graphics(events,calibration)

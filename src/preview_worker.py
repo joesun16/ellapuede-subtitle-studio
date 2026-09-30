@@ -16,37 +16,49 @@ def serve(video):
         print(json.dumps({'request_id':None,'code':'decode_failed','error':'无法读取视频'},ensure_ascii=False),flush=True)
         return
     with container:
-        stream=container.streams[meta['stream_index']]
-        decoder=None;last_frame=None;last_time=-1.;last_request=-1.
+        from video_crops import configure_decoder
+        stream=configure_decoder(container.streams[meta['stream_index']])
+        decoder=None;last_frame=None;next_frame=None;last_time=-1.
         def frame_at(seconds):
-            nonlocal decoder,last_frame,last_time,last_request
+            nonlocal decoder,last_frame,next_frame,last_time
             target=seconds+meta['origin']
-            # VFR clips may have shorter or longer intervals than fps_hint.
-            # Only reuse when this decoded frame is known to cover the request.
-            if last_frame is not None and last_request<=target<=last_time+1e-6:
-                last_request=target
-                return core.oriented_image(last_frame)
-            # Nearby forward scrubs continue the open decoder. Repeated seeks
-            # into the same GOP otherwise decode its earlier frames each time.
+            # Retain one look-ahead frame: show the frame covering the requested
+            # PTS, never the following frame. Works for VFR and repeated seeks.
             if decoder is None or target<last_time or target-last_time>.75:
                 container.seek(int(target/float(stream.time_base)),stream=stream,backward=True)
-                decoder=iter(container.decode(stream))
-            for frame in decoder:
-                if frame.pts is not None and float(frame.pts*frame.time_base)+1e-6>=target:
-                    last_frame=frame;last_time=float(frame.pts*frame.time_base);last_request=target
-                    return core.oriented_image(frame)
-            raise ValueError(f'无法定位视频帧 {seconds:.3f}s')
+                decoder=iter(container.decode(stream));last_frame=None;next_frame=None
+            while True:
+                frame=next_frame if next_frame is not None else next(decoder,None)
+                next_frame=None
+                if frame is None:break
+                if frame.pts is None:continue
+                timestamp=float(frame.pts*frame.time_base)
+                if timestamp>target+1e-6 and last_frame is not None:
+                    next_frame=frame;break
+                last_frame=frame;last_time=timestamp
+                if timestamp>target+1e-6:break
+            if last_frame is None:raise ValueError(f'无法定位视频帧 {seconds:.3f}s')
+            return last_frame
         for line in sys.stdin:
             request=None
             try:
                 request=json.loads(line);request_id=request['request_id']
                 seconds=request.get('seconds',meta['duration']*.33)
-                seconds=max(0,min(seconds,max(0,meta['duration']-max(.05,1/max(1,meta['fps_hint'])))))
-                original=frame_at(seconds);preview=original.copy();preview.thumbnail((1600,1000))
-                buffer=io.BytesIO();preview.save(buffer,format='JPEG',quality=91,subsampling=0)
+                seconds=max(0,min(seconds,max(0,meta['duration']-.001)))
+                frame=frame_at(seconds)
+                # Scale in the decoder before RGB conversion for interactive
+                # playback. OCR always gets the untouched full-resolution frame.
+                maximum=(960,600) if request.get('fast') else (1600,1000)
+                width,height=(frame.height,frame.width) if int(frame.rotation)%180 else (frame.width,frame.height)
+                ratio=min(1,maximum[0]/width,maximum[1]/height)
+                preview=frame.reformat(width=max(1,round(frame.width*ratio)),height=max(1,round(frame.height*ratio)),format='rgb24').to_image()
+                if int(frame.rotation):preview=preview.rotate(int(frame.rotation),expand=True)
+                buffer=io.BytesIO();preview.save(buffer,format='JPEG',quality=85 if request.get('fast') else 91,subsampling=0)
                 result={'request_id':request_id,'meta':meta,'seconds':seconds,
+                        'frame_seconds':max(0,last_time-meta['origin']),
                         'image':base64.b64encode(buffer.getvalue()).decode()}
                 if request.get('detect_roi') or request.get('read_roi'):
+                    original=core.oriented_image(frame)
                     pool=None
                     try:
                         with contextlib.redirect_stdout(sys.stderr),tempfile.TemporaryDirectory(prefix='ellapuede-preview-') as tmp:

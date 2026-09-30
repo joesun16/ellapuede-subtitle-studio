@@ -78,7 +78,7 @@ def retry_image(pool,crop,scale,reference):
         prepared.info['ellapuede_image_retry']=True
         result=pool.recognize(prepared);text,confidence=core.read_lines(result)
         if comparison_key(text)==expected and confidence>=.75:return text,confidence
-        votes+=int(comparison_key(text)==expected)
+        votes+=int(comparison_key(text)==expected and confidence>=.5)
     mask=text_mask(crop)
     if np.count_nonzero(mask)>20:
         im=Image.fromarray(np.uint8(mask)*255).convert('RGB')
@@ -105,10 +105,26 @@ def retry_blank(pool,crop):
     text,_=core.read_lines(pool.recognize(core.image_crop(mask,(0,0,1,1),2)))
     return None if text else ('',1.)
 
+def retry_punctuation(secondary,crop,expected):
+    """Resolve a punctuation-only retry from two complete current-frame crops.
+
+    Keep the full ROI so a real speaker dash cannot be hidden by the neighbor's
+    narrower box. Both readings must exactly reproduce the observed reference.
+    """
+    import subtitle_ocr as core
+    readings=[]
+    for factor in (1,2):
+        result=secondary.recognize(core.image_crop(crop,(0,0,1,1),factor))
+        if result is None:return None
+        text,score=core.read_lines(result)
+        if score<.85 or core.key(text)!=core.key(expected):return None
+        readings.append((text,score))
+    return readings[0][0],min(score for _,score in readings)
+
 def refine(rows,path,meta,roi,pool,scale,workers=2,skip_indices=()):
     import av
     import subtitle_ocr as core
-    from video_crops import FrameCropper
+    from video_crops import FrameCropper,requested_frames,configure_decoder
     spacing_repairs=0
     if getattr(pool,'languages',[])==['ko-KR']:
         from spacing_refine import refine as refine_spacing
@@ -159,11 +175,16 @@ def refine(rows,path,meta,roi,pool,scale,workers=2,skip_indices=()):
         cropper=FrameCropper(roi)
         # Independent English OCR is used only on unstable Apple Vision frames.
         # It must recognize a string on THIS image that was also observed nearby.
-        secondary=None;slots=BoundedSemaphore(min(2,workers))
+        secondary=None;punctuation_secondary=None;slots=BoundedSemaphore(min(2,workers))
         if getattr(pool,'name','').startswith('AppleVision') and pool.languages==['en-US']:
             from optional_ocr import OptionalOCR
             secondary=OptionalOCR(pool,'英语第二引擎复核',lambda:core.RapidPool(['en-US'],[],1))
             stack.callback(secondary.close)
+        if (getattr(pool,'name','').startswith('AppleVision') and
+                len(getattr(pool,'languages',[]))==1 and pool.languages[0] not in ('auto','en-US')):
+            from optional_ocr import OptionalOCR
+            punctuation_secondary=OptionalOCR(pool,'标点独立复核',lambda:core.RapidPool(pool.languages,[],1,device='cpu'))
+            stack.callback(punctuation_secondary.close)
         def verify(i,crop):
             if not references[i]['text']:return retry_blank(pool,crop)
             if secondary:
@@ -181,17 +202,19 @@ def refine(rows,path,meta,roi,pool,scale,workers=2,skip_indices=()):
                         if result is None:break
                         text,confidence=core.read_lines(result)
                         if confidence>=.85 and core.key(text) in allowed[i]:return text,confidence
-            return retry_image(pool,crop,scale,references[i])
+            result=retry_image(pool,crop,scale,references[i])
+            letters=lambda text:''.join(char for char in core.key(text) if char.isalnum())
+            if (result is None and punctuation_secondary and original[i] and
+                    letters(original[i])==letters(references[i]['text'])):
+                with slots:return retry_punctuation(punctuation_secondary,crop,references[i]['text'])
+            return result
         container=stack.enter_context(av.open(str(path)))
         executor=stack.enter_context(ThreadPoolExecutor(max_workers=workers))
-        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
-        for i,frame in enumerate(container.decode(stream)):
-            core.control.check()
-            if i not in references:continue
+        stream=configure_decoder(container.streams[meta['stream_index']])
+        for i,frame in requested_frames(container,stream,rows,references,meta):
             crop=cropper.crop(frame)
             pending.append((i,executor.submit(verify,i,crop)))
             if len(pending)>=workers*2:accept()
-            if i>=last:break
         while pending:accept()
     if repaired>spacing_repairs and getattr(pool,'languages',[])==['ko-KR']:
         repaired+=refine_spacing(rows,path,meta,roi)

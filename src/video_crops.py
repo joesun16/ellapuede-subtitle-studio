@@ -1,5 +1,63 @@
 """Convert only the subtitle band to RGB, retaining chroma interpolation context."""
 import av
+from collections import deque
+
+
+def configure_decoder(stream):
+    # SLICE (PyAV's default) does not parallelize single-slice H.264 streams.
+    # Two frame workers bound memory while using both decoder threads. This
+    # changes scheduling only, not pixels, PTS, scaling or OCR sampling.
+    stream.codec_context.thread_count=2
+    stream.codec_context.thread_type='AUTO'
+    return stream
+
+
+def requested_frames(container,stream,rows,needed,meta):
+    """Decode only requested PTS windows, preserving the exact source frame.
+
+    Sharing this path keeps all verification passes from decoding a long film
+    from the beginning for a few late suspects. A failed keyframe seek falls
+    back to sequential decoding; no requested check is silently skipped.
+    """
+    from resource_control import check
+    time_base=float(stream.time_base)
+    by_pts={round((rows[i]['start']+meta['origin'])/time_base):i for i in needed}
+    if not by_pts:return
+    remaining=deque(sorted(by_pts))
+    windows=[]
+    for pts in sorted(by_pts):
+        if windows and (pts-windows[-1][-1])*time_base<=2.0:windows[-1].append(pts)
+        else:windows.append([pts])
+    for window in windows:
+        container.seek(max(0,window[0]),stream=stream,backward=True)
+        next_needed=remaining[0]
+        for frame in container.decode(stream):
+            check()
+            if frame.pts is None:continue
+            # Never emit a later reference before a missed earlier reference:
+            # callers complete a check when its last requested frame arrives.
+            if frame.pts>next_needed:break
+            index=by_pts.pop(frame.pts,None)
+            if index is not None:
+                remaining.popleft()
+                yield index,frame
+            if not by_pts:return
+            next_needed=remaining[0]
+            if next_needed>window[-1]:break
+        if by_pts and remaining[0]<=window[-1]:break
+    if by_pts:
+        container.seek(0,stream=stream,backward=True)
+        last=max(by_pts)
+        for frame in container.decode(stream):
+            check()
+            if frame.pts is None:continue
+            if frame.pts>remaining[0]:break
+            index=by_pts.pop(frame.pts,None)
+            if index is not None:
+                remaining.popleft()
+                yield index,frame
+            if not by_pts or frame.pts>last:break
+        if by_pts:raise ValueError('视频复核缺少原始时间戳画面，已保留缓存，请检查视频完整性。')
 
 
 class FrameCropper:

@@ -22,6 +22,22 @@ def row(i,text):
 
 
 class VisualConsensusTests(unittest.TestCase):
+    def test_independent_punctuation_verification_requires_exact_agreement(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from PIL import Image
+        import subtitle_ocr as core
+        for returned in ('Are you?', 'Are you!'):
+            rows=[row(i,'Are you!' if i==8 else 'Are you?') for i in range(17)]
+            container=MagicMock();container.__enter__.return_value=container
+            container.streams=[SimpleNamespace(codec_context=SimpleNamespace())]
+            secondary=MagicMock();secondary.recognize.return_value=rows[0 if returned.endswith('?') else 8]['ocr']
+            pool=SimpleNamespace(name='AppleVision-test',languages=['en-US'])
+            with patch('av.open',return_value=container),patch('visual_consensus._needed_frames',side_effect=lambda c,s,r,n,m:((i,i) for i in sorted(n))),patch('video_crops.FrameCropper.crop',return_value=Image.new('RGB',(120,40))),patch('visual_consensus._similar_mask',return_value=False),patch('optional_ocr.OptionalOCR',return_value=secondary):
+                count=refine(rows,'unused',{'stream_index':0},(0,0,1,1),pool)
+            self.assertEqual(count,1 if returned.endswith('?') else 0)
+            self.assertEqual(rows[8]['text'],returned)
+            self.assertEqual(secondary.recognize.call_count,2)
     def test_combining_mark_flip_needs_matching_source_glyphs(self):
         import av
         from PIL import Image

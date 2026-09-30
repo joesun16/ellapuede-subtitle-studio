@@ -30,12 +30,13 @@ class PreviewSessionTests(unittest.TestCase):
                         container.mux(packet)
                 for packet in stream.encode():container.mux(packet)
             root=Path(__file__).resolve().parent.parent
-            requests=''.join(json.dumps({'request_id':i,'seconds':t})+'\n' for i,t in enumerate((0,.5,.625,1.5,.5)))
+            requests=''.join(json.dumps({'request_id':i,'seconds':t,'fast':True})+'\n' for i,t in enumerate((0,.5,.625,1.5,.55)))
             result=subprocess.run([sys.executable,str(root/'launch.py'),'--preview-worker',str(video),'--serve'],
                                   input=requests,text=True,capture_output=True,timeout=15,check=True)
             replies=[json.loads(line) for line in result.stdout.splitlines()]
             self.assertEqual([x['request_id'] for x in replies],[0,1,2,3,4])
-            self.assertEqual([round(x['seconds'],3) for x in replies],[0,.5,.625,1.5,.5])
+            self.assertEqual([round(x['seconds'],3) for x in replies],[0,.5,.625,1.5,.55])
+            self.assertEqual([round(x['frame_seconds'],3) for x in replies],[0,.5,.625,1.5,.5])
             images=[Image.open(io.BytesIO(base64.b64decode(x['image']))).convert('RGB') for x in replies]
             self.assertEqual([im.size for im in images],[(160,96)]*5)
             self.assertLess(images[0].getpixel((50,50))[0],images[1].getpixel((50,50))[0])

@@ -2,8 +2,8 @@
 from __future__ import annotations
 import base64,json,os,sys
 from pathlib import Path
-from PySide6.QtCore import Qt,QRectF,QPointF,QProcess,QTimer,Signal,QProcessEnvironment
-from PySide6.QtGui import QColor,QPainter,QPen,QPixmap,QPalette
+from PySide6.QtCore import Qt,QRectF,QPointF,QProcess,QTimer,Signal,QProcessEnvironment,QElapsedTimer
+from PySide6.QtGui import QColor,QPainter,QPen,QPixmap,QPalette,QShortcut,QKeySequence
 from PySide6.QtWidgets import (QWidget,QDialog,QApplication,QVBoxLayout,QHBoxLayout,QGridLayout,
     QLabel,QPushButton,QSlider,QDoubleSpinBox,QDialogButtonBox,QSizePolicy,QScrollArea,QLayout,QFileDialog,QStyle,QStyleOptionSlider)
 from ui_theme import polish_controls
@@ -31,6 +31,7 @@ class SeekSlider(QSlider):
 
 class CropCanvas(QWidget):
     changed=Signal(tuple)
+    interactionStarted=Signal()
     def __init__(self):
         super().__init__();self.pixmap=QPixmap();self.roi=DEFAULT_ROI;self.drag=None;self.draw_new=False;self.candidates=[]
         self.source_size=(1000,1000);self.placeholder='正在读取视频画面…';self.setMinimumSize(320,240);self.setMouseTracking(True)
@@ -81,6 +82,7 @@ class CropCanvas(QWidget):
         if self.hasFocus():p.setBrush(Qt.BrushStyle.NoBrush);p.setPen(QPen(QColor('#68e3ae'),1,Qt.PenStyle.DotLine));p.drawRect(self.rect().adjusted(2,2,-3,-3))
     def mousePressEvent(self,event):
         if event.button()!=Qt.MouseButton.LeftButton or not self.image_rect().contains(event.position()):return
+        self.interactionStarted.emit()
         self.setFocus();self.drag=(self.hit(event.position()),self.point(event.position()),self.roi,event.position())
     def mouseMoveEvent(self,event):
         if self.drag:self.update_drag(event.position());return
@@ -112,6 +114,7 @@ class CropCanvas(QWidget):
     def keyPressEvent(self,event):
         delta={Qt.Key.Key_Left:(-1,0),Qt.Key.Key_Right:(1,0),Qt.Key.Key_Up:(0,-1),Qt.Key.Key_Down:(0,1)}.get(event.key())
         if not delta:return super().keyPressEvent(event)
+        self.interactionStarted.emit()
         speed=10 if event.modifiers()&Qt.KeyboardModifier.ShiftModifier else 1
         dx=delta[0]*speed/max(1,self.source_size[0]);dy=delta[1]*speed/max(1,self.source_size[1]);a,b,c,d=self.roi
         if event.modifiers()&Qt.KeyboardModifier.ControlModifier:self.set_roi((a,b,c+dx,d+dy))
@@ -123,6 +126,8 @@ class CropDialog(QDialog):
     def __init__(self,path,roi,parent=None,count=1,engine="auto",language="auto"):
         super().__init__(parent);self.path=Path(path);self.relocated_path=None;self.series_count=count;self.meta=None;self.process=None;self.closed=False;self.detect_roi=False;self.engine=engine;self.language=language;self.calibration=None;self.read_roi=False;self.failure_reason=None
         self.preview_buffer='';self.preview_busy=False;self.preview_pending=None;self.preview_number=0
+        self.playing=False;self.play_clock=QElapsedTimer();self.play_anchor=0.;self.display_seconds=0.
+        self.play_timer=QTimer(self);self.play_timer.setInterval(33);self.play_timer.setTimerType(Qt.TimerType.PreciseTimer);self.play_timer.timeout.connect(self.play_tick)
         self.setWindowTitle('EllaPuede · 字幕区域');self.resize(1020,720);self.setMinimumSize(860,600)
         layout=QVBoxLayout(self);layout.setContentsMargins(24,24,24,24);layout.setSpacing(12)
         title=QLabel('框选对白字幕区域');title.setObjectName('title');layout.addWidget(title)
@@ -140,7 +145,7 @@ class CropDialog(QDialog):
         self.reading=QLabel('');self.reading.setWordWrap(True);self.reading.setMaximumHeight(100);self.reading.hide();sl.addWidget(self.reading)
         secondary_title=QLabel('辅助调整');secondary_title.setObjectName('muted');sl.addWidget(secondary_title)
         self.locate=QPushButton('查找字幕位置');self.locate.clicked.connect(self.find_region);sl.addWidget(self.locate)
-        self.reset=QPushButton('重置区域');self.reset.clicked.connect(lambda:self.canvas.set_roi(DEFAULT_ROI));sl.addWidget(self.reset)
+        self.reset=QPushButton('重置区域');self.reset.clicked.connect(self.pause_playback);self.reset.clicked.connect(lambda:self.canvas.set_roi(DEFAULT_ROI));sl.addWidget(self.reset)
         self.precision=QPushButton('精确调整');self.precision.setCheckable(True);sl.addWidget(self.precision)
         self.precision_dialog=QDialog(self);self.precision_dialog.setWindowTitle('EllaPuede · 精确调整字幕区域');self.precision_dialog.setWindowModality(Qt.WindowModality.WindowModal);self.precision_dialog.setMinimumSize(360,350)
         precise_layout=QVBoxLayout(self.precision_dialog);precise_layout.setContentsMargins(24,24,24,24);precise_layout.setSpacing(16)
@@ -150,13 +155,16 @@ class CropDialog(QDialog):
             spin=QDoubleSpinBox();spin.setRange(0,100);spin.setDecimals(1);spin.setSuffix(' %');spin.setSingleStep(.1);spin.setValue(self.canvas.roi[i]*100)
             spin.setAccessibleName('区域'+name+'边界百分比');spin.editingFinished.connect(self.apply_coords);self.coords.append(spin);grid.addWidget(QLabel(name),i,0);grid.addWidget(spin,i,1)
         precise_layout.addWidget(coords);back=QPushButton('返回画面');back.clicked.connect(self.precision_dialog.accept);precise_layout.addWidget(back)
+        self.precision.toggled.connect(lambda visible:self.pause_playback() if visible else None)
         self.precision.toggled.connect(self.precision_dialog.setVisible);self.precision_dialog.finished.connect(lambda _:self.precision.setChecked(False))
         sl.addStretch();sidebar=QScrollArea();sidebar.setObjectName('cropSidebarScroll')
         sidebar.setFrameShape(QScrollArea.Shape.NoFrame);sidebar.setWidgetResizable(True);sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);sidebar.setFixedWidth(260)
         sidebar.viewport().setObjectName('cropSidebarViewport');sidebar.viewport().setPalette(side_palette);sidebar.viewport().setAutoFillBackground(True)
         sidebar.setWidget(side);row.addWidget(sidebar);layout.addLayout(row,1)
         timebar=QHBoxLayout();self.previous=QPushButton('前 1 秒');self.next=QPushButton('后 1 秒');self.slider=SeekSlider(Qt.Orientation.Horizontal);self.slider.setRange(0,1000);self.slider.setValue(330);self.slider.setAccessibleName('视频预览时间；点击或拖动立即选择时间');self.slider.setEnabled(False)
-        self.time_label=QLabel('读取中');self.time_label.setFixedWidth(142);self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter);timebar.addWidget(self.previous);timebar.addWidget(self.slider,1);timebar.addWidget(self.next);timebar.addWidget(self.time_label);layout.addLayout(timebar)
+        self.play_button=QPushButton('播放');self.play_button.setFixedWidth(80);self.play_button.setEnabled(False);self.play_button.setToolTip('播放 / 暂停画面（空格，无声预览）');self.play_button.clicked.connect(self.toggle_play)
+        self.play_shortcut=QShortcut(QKeySequence(Qt.Key.Key_Space),self);self.play_shortcut.activated.connect(self.toggle_play)
+        self.time_label=QLabel('读取中');self.time_label.setFixedWidth(142);self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter);timebar.addWidget(self.play_button);timebar.addWidget(self.previous);timebar.addWidget(self.slider,1);timebar.addWidget(self.next);timebar.addWidget(self.time_label);layout.addLayout(timebar)
         self.previous.setEnabled(False);self.next.setEnabled(False)
         self.info=QLabel('');self.info.setObjectName('muted');self.info.setFixedHeight(20);layout.addWidget(self.info)
         footer=QHBoxLayout();self.relink=QPushButton('重新定位视频');self.relink.clicked.connect(self.relocate_source);self.relink.hide();footer.addWidget(self.relink)
@@ -164,6 +172,7 @@ class CropDialog(QDialog):
         self.cancel=QPushButton('取消');self.cancel.clicked.connect(self.reject);self.apply=QPushButton('应用字幕区域');self.apply.setObjectName('primary');self.apply.setEnabled(False);self.apply.clicked.connect(self.accept);footer.addWidget(self.cancel);footer.addWidget(self.apply);layout.addLayout(footer)
         self.debounce=QTimer(self);self.debounce.setSingleShot(True);self.debounce.setInterval(45);self.debounce.timeout.connect(self.load)
         self.slider.valueChanged.connect(self.seek);self.slider.sliderReleased.connect(self.load);self.previous.clicked.connect(lambda:self.step(-1));self.next.clicked.connect(lambda:self.step(1));self.canvas.changed.connect(self.sync_roi)
+        self.slider.sliderPressed.connect(self.pause_playback);self.canvas.interactionStarted.connect(self.pause_playback)
         polish_controls(self);self.load()
     def set_info(self,message):
         self.info.setText(message);self.info.setToolTip(message)
@@ -180,6 +189,7 @@ class CropDialog(QDialog):
         self.caption.setText(candidate.name+(f' · 区域将应用到整剧共 {self.series_count} 个视频' if self.series_count>1 else ''))
         self.load()
     def show_failure(self,message,missing=False):
+        self.pause_playback();self.play_button.setEnabled(False)
         self.failure_reason=message;self.set_info(message);self.info.setToolTip(str(self.path));self.retry.setVisible(not missing)
         self.relink.show();usable=not missing and self.meta is not None and not self.canvas.pixmap.isNull()
         self.apply.setEnabled(usable);self.read_button.setEnabled(False)
@@ -189,10 +199,14 @@ class CropDialog(QDialog):
             self.canvas.pixmap=QPixmap();self.canvas.placeholder='找不到原视频，请点击“重新定位视频”' if missing else '暂时无法预览视频画面';self.canvas.update();self.preview.clear()
         self.reading.hide()
     def new_selection(self):
+        self.pause_playback()
         self.canvas.draw_new=True;self.canvas.setCursor(Qt.CursorShape.CrossCursor);self.canvas.setFocus();self.set_info('在画面上拖动以重新框选。')
     def find_region(self):
+        self.pause_playback()
         self.detect_roi=True;self.load()
     def read_selection(self):
+        self.pause_playback()
+        self.set_position(self.display_seconds)
         self.read_roi=True;self.load()
     def sync_roi(self,roi):
         if self.calibration and tuple(self.calibration['roi'])!=tuple(roi):self.calibration=None
@@ -202,15 +216,51 @@ class CropDialog(QDialog):
         p=self.canvas.pixmap;a,b,c,d=roi;crop=p.copy(round(a*p.width()),round(b*p.height()),max(1,round((c-a)*p.width())),max(1,round((d-b)*p.height())))
         self.preview.setPixmap(crop.scaled(self.preview.size(),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
     def apply_coords(self):
+        self.pause_playback()
         if not self.canvas.set_roi([s.value()/100 for s in self.coords]):
             self.sync_roi(self.canvas.roi);self.set_info('区域不能倒置或小于 8 像素，已保留上一次有效区域。')
     def seek(self):
         if self.meta:
-            self.time_label.setText(f'{self.slider.value()/1000*self.meta["duration"]:.1f} / {self.meta["duration"]:.1f} 秒')
-            self.debounce.start()
+            target=self.selected_seconds()
+            self.pause_playback()
+            self.set_position(target)
+            self.time_label.setText(f'{self.selected_seconds():.2f} / {self.meta["duration"]:.2f} 秒')
+            # Throttle rather than restarting a debounce on every mouse move:
+            # continuously dragging must still produce preview frames.
+            if not self.debounce.isActive():self.debounce.start()
     def step(self,direction):
-        if self.meta:self.slider.setValue(self.slider.value()+round(direction*1000/max(.001,self.meta['duration'])))
+        if self.meta:self.slider.setValue(self.slider.value()+round(direction*self.slider.maximum()/max(.001,self.meta['duration'])))
+    def selected_seconds(self):
+        return self.slider.value()/max(1,self.slider.maximum())*self.meta['duration'] if self.meta else 0.
+    def set_position(self,seconds):
+        self.slider.blockSignals(True)
+        self.slider.setValue(round(seconds/max(.001,self.meta['duration'])*self.slider.maximum()))
+        self.slider.blockSignals(False)
+        self.time_label.setText(f'{seconds:.2f} / {self.meta["duration"]:.2f} 秒')
+    def pause_playback(self):
+        if not self.playing:return
+        self.playing=False;self.play_timer.stop();self.play_button.setText('播放')
+        self.preview_number+=1;self.preview_pending=None
+        if self.meta:self.set_position(self.display_seconds)
+    def toggle_play(self):
+        if not self.play_button.isEnabled() or self.closed:return
+        if self.playing:
+            self.pause_playback();self.load();return
+        self.debounce.stop()
+        self.play_anchor=self.selected_seconds()
+        if self.play_anchor>=self.meta['duration']-.1:self.play_anchor=0.;self.set_position(0.)
+        self.playing=True;self.play_button.setText('暂停');self.play_clock.start();self.play_timer.start();self.play_tick()
+    def play_tick(self):
+        if not self.playing or self.closed:return
+        seconds=self.play_anchor+self.play_clock.elapsed()/1000
+        if seconds>=self.meta['duration']-.001:
+            self.pause_playback();self.set_position(max(0,self.meta['duration']-.001));self.load();return
+        # One in-flight request bounds memory. The wall clock skips stale
+        # preview frames under load; extraction never skips video frames.
+        if self.preview_busy:return
+        self.set_position(seconds);self.load()
     def cancel_process(self):
+        self.pause_playback()
         p=self.process;self.process=None
         self.preview_busy=False;self.preview_pending=None
         if p:
@@ -232,7 +282,8 @@ class CropDialog(QDialog):
             return
         self.preview_number+=1
         request={'request_id':self.preview_number,'engine':self.engine,'language':self.language}
-        if self.meta:request['seconds']=self.slider.value()/1000*self.meta['duration']
+        if self.meta:request['seconds']=self.selected_seconds()
+        request['fast']=self.playing or self.slider.isSliderDown()
         if self.detect_roi:request['detect_roi']=True
         if self.read_roi:request['read_roi']=','.join(map(str,self.canvas.roi))
         self.detect_roi=False;self.read_roi=False;self.preview_pending=request
@@ -261,16 +312,22 @@ class CropDialog(QDialog):
                 if data.get('error') and data.get('request_id') is None:
                     failure('找不到原视频，请重新定位。' if data.get('code')=='source_missing' else '无法打开视频，请确认文件可正常播放，或重新选择。')
                     continue
-                if self.preview_pending:
-                    self.send_preview_request();continue
-                if data.get('request_id')!=self.preview_number or self.debounce.isActive():continue
+                if self.preview_pending:self.send_preview_request()
+                # While dragging show the newest completed frame even if a
+                # newer request is queued. After release only the exact target
+                # may replace the paused image.
+                if data.get('request_id')!=self.preview_number and not self.slider.isSliderDown():continue
                 try:
                     if data.get('error'):
                         failure('找不到原视频，请重新定位。' if data.get('code')=='source_missing' else '无法读取此视频，请确认文件可正常播放，或重新选择视频。')
                         continue
                     pix=QPixmap()
                     if not pix.loadFromData(base64.b64decode(data['image'])):raise ValueError('画面数据无效')
-                    self.meta=data['meta'];self.canvas.pixmap=pix
+                    first=self.meta is None
+                    self.meta=data['meta'];self.canvas.pixmap=pix;self.display_seconds=data.get('frame_seconds',data['seconds'])
+                    if first:
+                        self.slider.blockSignals(True);self.slider.setRange(0,max(1,round(self.meta['duration']*1000)));self.slider.blockSignals(False)
+                        self.set_position(self.display_seconds)
                     if data.get('roi'):self.canvas.roi=tuple(data['roi'])
                     if data.get('calibration'):self.calibration=data['calibration'];self.canvas.candidates=self.calibration.get('candidates',[])
                     self.canvas.source_size=(self.meta['width'],self.meta['height']);self.canvas.update();self.sync_roi(self.canvas.roi)
@@ -280,9 +337,9 @@ class CropDialog(QDialog):
                     if self.canvas.candidates:self.reading.setToolTip('右侧绿色刻度为取样 OCR 找到的候选带；点击框外对应高度可吸附。候选带不保证都是对白。')
                     # The label follows the pointer. An older decoded frame must
                     # not pull it backwards while another request is pending.
-                    self.time_label.setText(f'{self.slider.value()/1000*self.meta["duration"]:.1f} / {self.meta["duration"]:.1f} 秒')
+                    self.time_label.setText(f'{self.selected_seconds():.2f} / {self.meta["duration"]:.2f} 秒')
                     self.set_info(('自动定位未成功，请手动框选。'+data['roi_error']) if data.get('roi_error') else ('已定位字幕区域，请确认后应用。' if data.get('roi') else ''))
-                    for w in (self.apply,self.previous,self.next,self.slider,self.read_button):w.setEnabled(True)
+                    for w in (self.apply,self.previous,self.next,self.slider,self.read_button,self.play_button):w.setEnabled(True)
                     for w in (self.redraw,self.reset,self.locate,self.precision):w.setEnabled(True)
                 except Exception:failure('画面读取失败，请重新读取；如仍失败，请确认视频文件可正常播放。')
         def finished(code,status):

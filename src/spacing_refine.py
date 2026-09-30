@@ -17,6 +17,7 @@ def same_layout(first,second,boxes):
 def refine(rows,path,meta,roi):
     import av
     import subtitle_ocr as core
+    from video_crops import requested_frames,configure_decoder,FrameCropper
     targets={};reference_masks={}
     for compact,items in groupby(enumerate(rows),lambda item:''.join(core.key(item[1]['text']).split())):
         if not compact:continue
@@ -32,18 +33,15 @@ def refine(rows,path,meta,roi):
         for i,row in group:
             if row['text']!=text:targets[i]=identifier
     if not targets:return 0
-    repaired=0;last=max(targets)
+    repaired=0;cropper=FrameCropper(roi)
     with av.open(str(path)) as container:
-        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
-        for i,frame in enumerate(container.decode(stream)):
-            core.control.check()
-            if i not in targets:continue
+        stream=configure_decoder(container.streams[meta['stream_index']])
+        for i,frame in requested_frames(container,stream,rows,targets,meta):
             mask,boxes,reference=reference_masks[targets[i]];row=rows[i]
-            current=text_mask(core.image_crop(core.oriented_image(frame),roi,1))
+            current=text_mask(cropper.crop(frame))
             # Only whitespace changes here: all recognized characters already agree.
             # A noisy detector may extend its box into clothing; compare the
             # observed reference glyph area so scenery cannot veto a space repair.
             if same_layout(mask,current,boxes):
                 row['primary_text']=row['text'];row['text']=reference['text'];row['image_verified']=True;repaired+=1
-            if i>=last:break
     return repaired

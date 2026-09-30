@@ -94,6 +94,12 @@ class SegmentationTests(unittest.TestCase):
         self.assertTrue(events[3]['no_visible_glyph_evidence'])
         self.assertNotIn('no_visible_glyph_evidence',events[4])
 
+    def test_no_short_glyph_suspects_do_not_decode_calibration_frames(self):
+        events=[dict(text='A caption',frames=30,start=0,end=1,confidence=.99)]
+        with patch.object(tool,'frame_at') as decode:
+            self.assertEqual(tool.verify_single_frame_glyphs(events,[],'video',{},(0,0,1,1)),0)
+            decode.assert_not_called()
+
     def test_sustained_scene_label_does_not_redefine_dialogue_style(self):
         anchors=[{'id':i+1,'start':i*2,'end':i*2+.9,'text':f'dialogue {i}',
                   'frames':27,'confidence':.95,
@@ -180,6 +186,20 @@ class SegmentationTests(unittest.TestCase):
         self.assertEqual([item['text'] for item in kept],['哥','哥'])
         self.assertEqual([item['text'] for item in excluded],['续','待'])
         self.assertEqual([item['id'] for item in kept],[1,2])
+
+    def test_full_scan_dialogue_prevents_sparse_calibration_from_deleting_long_line(self):
+        calibration={'roi':[.04,.69,.96,.81],'font_height':.03724,
+                     'candidates':[{'roi':[.02,.6795,.98,.775], 'coverage':6,'unique':6}]}
+        anchors=[{'id':i+1,'start':i*3,'end':i*3+1.,'text':'대화 '+str(i),'frames':25,
+                  'observed_layout':{'center_x':.505,'bottom_y':.535,'glyph_height':.336}}
+                 for i in range(8)]
+        caption={'id':9,'start':30.,'end':32.,'text':'긴 자막 테스트입니다','frames':50,
+                 'observed_layout':{'center_x':.509,'bottom_y':.538,'glyph_height':.51}}
+        sign={'id':10,'start':33.,'end':34.,'text':'SIGN','frames':25,
+              'observed_layout':{'center_x':.83,'bottom_y':.93,'glyph_height':.63}}
+        kept,excluded=tool.exclude_off_band_graphics(anchors+[caption,sign],calibration)
+        self.assertIn(caption['text'],[e['text'] for e in kept])
+        self.assertEqual([e['text'] for e in excluded],['SIGN'])
 
     def test_repeated_line_with_real_blank_is_separate(self):
         events = tool.make_segments([row(0,'Yes'),row(1,''),row(2,'Yes')])

@@ -7,6 +7,12 @@ from unittest.mock import patch
 import resource_control as rc
 
 class ControlTests(unittest.TestCase):
+    def test_denied_priority_does_not_disable_memory_protection_or_abort(self):
+        import psutil
+        with patch.object(psutil.Process,'nice',side_effect=psutil.AccessDenied()):
+            c=rc.Controller()
+        self.assertIs(c.psutil,psutil)
+        self.assertEqual(c.process.pid,__import__('os').getpid())
     def test_progress_messages_are_single_complete_utf8_records(self):
         import io,json
         from concurrent.futures import ThreadPoolExecutor

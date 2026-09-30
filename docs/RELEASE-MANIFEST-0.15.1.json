@@ -1,0 +1,42 @@
+{
+  "product": "EllaPuede 字幕提取工具",
+  "version": "0.15.1",
+  "build": 37,
+  "status": "公测",
+  "release_tag": "v0.15.1",
+  "release_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/tag/v0.15.1",
+  "source_commit_public": "203050de2b1d0f0a1751a2d2115e149553f6c8f5",
+  "ci_run": "https://github.com/joesun16/ellapuede-subtitle-studio/actions/runs/36669706152",
+  "ci_result": "macos-14 and windows-latest success; 255 tests on each; Windows install, offline OCR, preview, export and uninstall passed",
+  "release_publish_ci_run": "https://github.com/joesun16/ellapuede-subtitle-studio/actions/runs/36670213371",
+  "asset_origin": "Successful build 36669706152; publish workflow verifies source SHA, tag and installer SHA-256",
+  "build_environment": "GitHub Actions macos-14 / windows-latest; Python 3.13; PyInstaller 6.17.0; bundled offline models",
+  "files": [
+    {
+      "name": "EllaPuede-0.15.1-Windows-x64-Setup.exe",
+      "bytes": 227572867,
+      "sha256": "66e2e8ddf2f50366f1db7291ac8e71e165e32122999a066265cd02be260bed31",
+      "download_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.15.1/EllaPuede-0.15.1-Windows-x64-Setup.exe"
+    },
+    {
+      "name": "EllaPuede-0.15.1-macOS-AppleSilicon-Installer.pkg",
+      "bytes": 253221574,
+      "sha256": "efc9ab194a9461d3b1eaea4b3165f9e288065792afdf77fe27076f4b40213a27",
+      "download_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.15.1/EllaPuede-0.15.1-macOS-AppleSilicon-Installer.pkg"
+    },
+    {
+      "name": "EllaPuede-0.15.1-macOS-AppleSilicon.dmg",
+      "bytes": 269935525,
+      "sha256": "20fb31180e1d2f2b7b7e3d135f5fedd57b577d175e08e9464821ec9d9e02676f",
+      "download_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.15.1/EllaPuede-0.15.1-macOS-AppleSilicon.dmg"
+    }
+  ],
+  "checksum_file_url": "https://github.com/joesun16/ellapuede-subtitle-studio/releases/download/v0.15.1/SHA256SUMS.txt",
+  "limitations": [
+    "OCR may still omit, misread or fragment subtitles; no all-language error-free guarantee",
+    "Scene text with dialogue-like layout may be included",
+    "Windows varied hardware and full-season throughput unverified",
+    "100-minute video in 5–10 minutes not achieved",
+    "No company Developer ID / Authenticode signature or Apple notarization"
+  ]
+}

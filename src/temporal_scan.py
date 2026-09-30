@@ -72,7 +72,7 @@ def group_capacity(image):
 def scan_frames(path,meta,roi,pool,cache,workers,scale):
     import av
     import subtitle_ocr as core
-    from video_crops import FrameCropper
+    from video_crops import FrameCropper,configure_decoder
     memo=ExactFrameMemo(pool)
     cropper=FrameCropper(roi)
     db=sqlite3.connect(cache/'frames.sqlite');db.execute('CREATE TABLE IF NOT EXISTS frames (idx INTEGER PRIMARY KEY,t REAL,end REAL,data TEXT)')
@@ -89,7 +89,7 @@ def scan_frames(path,meta,roi,pool,cache,workers,scale):
             core.control.emit('progress',seconds=items[-1][2],duration=meta['duration'],new_frames=new_rows,fps=round(new_rows/max(.001,now-started),1));last_emit=now
     try:
         with av.open(str(path)) as c,ThreadPoolExecutor(max_workers=workers) as ex:
-            stream=c.streams[meta['stream_index']];stream.codec_context.thread_count=2;last=None
+            stream=configure_decoder(c.streams[meta['stream_index']]);last=None
             def submit():
                 nonlocal group,images,anchor
                 if group:

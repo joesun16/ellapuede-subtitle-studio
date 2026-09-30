@@ -74,6 +74,16 @@ def main():
         proc=subprocess.run([str(a.worker.resolve()),'--preview-worker',str(video),'--seconds','0.5'],capture_output=True,text=True,encoding='utf-8',timeout=30)
         if proc.returncode:raise RuntimeError(proc.stderr)
         preview=json.loads(proc.stdout);assert preview['meta']['width']==600 and preview['image']
+        requests=''.join(json.dumps({'request_id':i,'seconds':seconds,'fast':True})+'\n'
+                         for i,seconds in enumerate((0,.55,.65,1.2,.2)))
+        proc=subprocess.run([str(a.worker.resolve()),'--preview-worker',str(video),'--serve'],
+                            input=requests,capture_output=True,text=True,encoding='utf-8',timeout=30)
+        if proc.returncode:raise RuntimeError(proc.stderr)
+        previews=[json.loads(line) for line in proc.stdout.splitlines()]
+        assert [item['request_id'] for item in previews]==list(range(5)),previews
+        for item,target in zip(previews,(0,.55,.65,1.2,.2)):
+            assert item['frame_seconds']<=target+1e-6<item['frame_seconds']+1/12+1e-6,item['frame_seconds']
+        print('安装后的连续播放请求、反向定位与实际帧时间核验通过。')
         command=[str(a.worker.resolve()),'--worker','extract',str(video),'-o',str(root/'out'),'--engine','rapid','--strategy','accurate','--roi','0,0,1,1','--scale','1','--workers','1','--format','both']
         # One unchanging logo is deliberately insufficient evidence to determine
         # a drama's language. Verify the actionable failure, then its recovery.
