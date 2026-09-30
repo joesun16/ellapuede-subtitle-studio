@@ -96,7 +96,7 @@ class AssessmentFollowupTests(unittest.TestCase):
         container.streams=[SimpleNamespace(codec_context=SimpleNamespace())]
         container.decode.return_value=iter(range(len(rows)))
         pool=SimpleNamespace(languages=['en-US'],name='AppleVision')
-        with patch('av.open',return_value=container), patch.object(core,'oriented_image',return_value=Image.new('RGB',(80,30))), patch.object(core,'RapidPool',side_effect=ImportError('missing')), patch('quality_refine.retry_image',return_value=('hello',.99)):
+        with patch('av.open',return_value=container), patch('video_crops.requested_frames',side_effect=lambda c,s,r,needed,m:((i,i) for i in sorted(needed))), patch.object(core,'oriented_image',return_value=Image.new('RGB',(80,30))), patch.object(core,'RapidPool',side_effect=ImportError('missing')), patch('quality_refine.retry_image',return_value=('hello',.99)):
             self.assertEqual(refine(rows,'test',{'stream_index':0},(0,0,1,1),pool,1,1),1)
         self.assertTrue(all(row['text']=='hello' for row in rows))
 
@@ -118,7 +118,7 @@ class AssessmentFollowupTests(unittest.TestCase):
         container.decode.return_value=iter(range(len(rows)))
         pool=SimpleNamespace(languages=['en-US'],name='AppleVision')
         secondary=Mock();secondary.recognize.return_value={'lines':[]}
-        with patch('av.open',return_value=container), patch.object(core,'oriented_image',return_value=Image.new('RGB',(80,30))), patch.object(core,'RapidPool',return_value=secondary), patch('quality_refine.retry_image',return_value=None):
+        with patch('av.open',return_value=container), patch('video_crops.requested_frames',side_effect=lambda c,s,r,needed,m:((i,i) for i in sorted(needed))), patch.object(core,'oriented_image',return_value=Image.new('RGB',(80,30))), patch.object(core,'RapidPool',return_value=secondary), patch('quality_refine.retry_image',return_value=None):
             self.assertEqual(refine(rows,'test',{'stream_index':0},(0,0,1,1),pool,2,1),0)
         self.assertEqual(secondary.recognize.call_count,2)  # full crop + text band, never band twice
         self.assertEqual(rows[8]['text'],'hello!')

@@ -1,3 +1,3 @@
 """Single release version for both operating systems and installers."""
-VERSION = "0.14.7"
-BUILD = "35"
+VERSION = "0.15.0"
+BUILD = "36"

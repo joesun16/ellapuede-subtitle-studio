@@ -77,6 +77,36 @@ class CropTests(unittest.TestCase):
             self.assertEqual(d.slider.geometry(),bar)
             QTest.mouseRelease(d.slider,Qt.MouseButton.LeftButton,pos=QPoint(round(bar.width()*.75),bar.height()//2))
             d.reject()
+    def test_playback_is_bounded_and_pauses_on_region_interaction(self):
+        with patch.object(CropDialog,'load') as load:
+            d=CropDialog(Path('/absent.mp4'),None);d.meta={'duration':7200.}
+            d.slider.setRange(0,7200000);d.set_position(50.123);d.play_button.setEnabled(True)
+            self.assertAlmostEqual(d.selected_seconds(),50.123,places=3)
+            d.toggle_play();self.assertTrue(d.playing);self.assertEqual(d.play_button.text(),'暂停')
+            calls=load.call_count;d.preview_busy=True;d.play_tick();self.assertEqual(load.call_count,calls)
+            d.display_seconds=50.2;d.canvas.interactionStarted.emit()
+            self.assertFalse(d.playing);self.assertFalse(d.play_timer.isActive())
+            self.assertAlmostEqual(d.selected_seconds(),50.2)
+            d.toggle_play();d.reject();self.assertFalse(d.playing);self.assertTrue(d.closed)
+    def test_seek_during_playback_preserves_user_target(self):
+        with patch.object(CropDialog,'load'):
+            d=CropDialog(Path('/absent.mp4'),None);d.meta={'duration':100.}
+            d.play_button.setEnabled(True);d.display_seconds=20.;d.toggle_play()
+            d.slider.setValue(750)
+            self.assertFalse(d.playing);self.assertEqual(d.selected_seconds(),75.)
+            d.reject()
+    def test_continuous_drag_does_not_restart_preview_throttle(self):
+        with patch.object(CropDialog,'load'),patch('crop_editor.QTimer.start') as start:
+            d=CropDialog(Path('/absent.mp4'),None);d.meta={'duration':100.}
+            with patch.object(d.debounce,'isActive',return_value=True):d.seek()
+            start.assert_not_called();d.reject()
+    def test_playback_bar_fits_minimum_dialog_without_overlapping_controls(self):
+        with patch.object(CropDialog,'load'):
+            d=CropDialog(Path('/absent.mp4'),None);d.resize(d.minimumSize());d.show();APP.processEvents()
+            controls=[d.play_button,d.previous,d.slider,d.next,d.time_label]
+            self.assertGreater(d.slider.width(),100)
+            for left,right in zip(controls,controls[1:]):self.assertLess(left.geometry().right(),right.geometry().left())
+            self.assertLess(controls[-1].geometry().right(),d.width());d.reject()
 class LayoutTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.w=MainWindow(Path(self.tmp.name));self.w.resize(960,680);self.w.show();APP.processEvents()

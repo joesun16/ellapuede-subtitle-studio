@@ -31,8 +31,13 @@ class Controller:
             import psutil
             self.psutil=psutil
             self.process=psutil.Process()
-            if os.name=='nt':self.process.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
-            else:self.process.nice(5)
+            # Priority is an optional courtesy, not a prerequisite for OCR.
+            # Managed Windows accounts and sandboxed Mac processes can deny it.
+            # Keep memory/cancel monitoring active in that case.
+            try:
+                if os.name=='nt':self.process.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                else:self.process.nice(5)
+            except (OSError,psutil.Error):pass
         except (ImportError, OSError):
             self.psutil=None
 

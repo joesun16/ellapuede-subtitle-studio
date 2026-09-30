@@ -12,6 +12,7 @@ from difflib import SequenceMatcher
 import unicodedata
 
 import numpy as np
+from video_crops import configure_decoder,requested_frames
 
 
 def _runs(rows):
@@ -262,7 +263,7 @@ def refine_low_confidence_holds(rows,path,meta,roi):
     if not groups:return 0
     cropper=FrameCropper(roi);repaired=0
     with av.open(str(path)) as container:
-        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
+        stream=configure_decoder(container.streams[meta['stream_index']])
         for indices,reading in groups:
             core.control.check()
             accepted=[index for index in indices if core.key(rows[index]['text'])==reading]
@@ -329,7 +330,7 @@ def refine_sparse_visible_holds(rows,path,meta,roi,skip_indices=()):
     core.control.emit('phase',phase=f'核验 {len(candidates)} 处持续字幕字形')
     core.control.emit('verify_progress',done=0,total=len(candidates),base=.96,span=.02)
     with av.open(str(path)) as container:
-        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
+        stream=configure_decoder(container.streams[meta['stream_index']])
         for candidate_number,(value,start,end,anchor,left,right,bounds) in enumerate(candidates,1):
             core.control.check()
             core.control.emit('verify_progress',done=candidate_number-1,total=len(candidates),
@@ -378,7 +379,7 @@ def refine_held_variants(rows,path,meta,roi,pool):
     cropper=FrameCropper(roi);repaired=0
     core.control.emit('phase',phase=f'核验 {len(groups)} 处连续字幕画面')
     with av.open(str(path)) as container, ExitStack() as cleanup:
-        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
+        stream=configure_decoder(container.streams[meta['stream_index']])
         secondary=None
         for indices,runs,readings in groups:
             core.control.check()
@@ -512,7 +513,7 @@ def refine_short_multiline_openings(rows,path,meta,roi):
     if not candidates:return 0
     cropper=FrameCropper(roi);repaired=0
     with av.open(str(path)) as container:
-        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
+        stream=configure_decoder(container.streams[meta['stream_index']])
         for start,end,reference,part,old_text,new_text,disagreement in candidates:
             core.control.check()
             source=start+(end-start)//2
@@ -568,7 +569,7 @@ def refine_combining_mark_variants(rows,path,meta,roi):
     if not candidates:return 0
     cropper=FrameCropper(roi);repaired=0
     with av.open(str(path)) as container:
-        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
+        stream=configure_decoder(container.streams[meta['stream_index']])
         for start,middle,other,end,first,second,disagreement in candidates:
             core.control.check()
             anchors=(start+(middle-start)//2,
@@ -600,29 +601,8 @@ def refine_combining_mark_variants(rows,path,meta,roi):
 
 
 def _needed_frames(container,stream,rows,needed,meta):
-    """Seek to sparse suspect windows while retaining each source frame's PTS."""
-    from subtitle_ocr import control
-    ordered=sorted(needed,key=lambda index:rows[index]['start'])
-    windows=[]
-    for index in ordered:
-        if windows and rows[index]['start']-rows[windows[-1][-1]]['start']<=1.2:
-            windows[-1].append(index)
-        else:windows.append([index])
-    time_base=float(stream.time_base)
-    for window in windows:
-        first=round((rows[window[0]]['start']+meta['origin'])/time_base)
-        last=round((rows[window[-1]]['start']+meta['origin'])/time_base)
-        by_pts={round((rows[index]['start']+meta['origin'])/time_base):index
-                for index in window}
-        container.seek(max(0,first),stream=stream,backward=True)
-        for frame in container.decode(stream):
-            control.check()
-            if frame.pts is None:continue
-            if frame.pts>last:break
-            index=by_pts.pop(frame.pts,None)
-            if index is not None:yield index,frame
-        # A seek near the stream tail can miss a truncated final frame. Leave
-        # those rows unchanged instead of assigning pixels from a wrong PTS.
+    """Compatibility entry for the shared exact-PTS window decoder."""
+    yield from requested_frames(container,stream,rows,needed,meta)
 
 
 def _letters(text):
@@ -800,7 +780,7 @@ def refine(rows,path,meta,roi,pool=None,_pass=0):
             if pool is None or not getattr(pool,'name','').startswith('AppleVision'):
                 return None
             languages=getattr(pool,'languages',[])
-            if len(languages)!=1 or languages[0]=='auto' or _letters(reference)==_letters(variant):
+            if len(languages)!=1 or languages[0]=='auto':
                 return None
             if secondary is None:
                 from optional_ocr import OptionalOCR
@@ -815,11 +795,15 @@ def refine(rows,path,meta,roi,pool=None,_pass=0):
                     dialogue_min_mask_density=getattr(pool,'dialogue_min_mask_density',0))
                 if result is None:return None
                 readings.append(core.read_lines(result))
-            if all(score>=.80 and _letters(text)==_letters(reference) for text,score in readings):
+            # Punctuation-only flicker needs exact independent agreement too.
+            # Ignoring punctuation here could erase a genuine speaker dash or
+            # question mark. Never crop down to the reference box to hide it.
+            compare=core.key if _letters(reference)==_letters(variant) else _letters
+            if all(score>=.80 and compare(text)==compare(reference) for text,score in readings):
                 return min(score for _,score in readings)
             return None
 
-        stream=container.streams[meta['stream_index']];stream.codec_context.thread_count=2
+        stream=configure_decoder(container.streams[meta['stream_index']])
         for frame_index,frame in _needed_frames(container,stream,rows,needed,meta):
             crop=cropper.crop(frame)
             mask=text_mask(crop)
