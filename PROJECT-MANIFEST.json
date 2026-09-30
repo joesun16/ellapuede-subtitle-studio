@@ -1,8 +1,8 @@
 {
   "id": "ella-puede-subtitle-studio",
   "name": "EllaPuede 字幕提取工具",
-  "version": "0.15.0",
-  "build": "36",
+  "version": "0.15.1",
+  "build": "37",
   "kind": "desktop-application-source",
   "platforms": [
     "macos-arm64",
@@ -96,10 +96,10 @@
   "repository": "https://github.com/joesun16/ellapuede-subtitle-studio",
   "release_source_commit": null,
   "release_tag": null,
-  "release_ci_run": "https://github.com/joesun16/ellapuede-subtitle-studio/actions/runs/36246568998",
+  "release_ci_run": null,
   "installer_manifest": null,
-  "development_status": "0.14.7 / build 35 公测；画面字形及对白版面过滤已加强；全语言人工真值、Windows 多机型和长视频速度目标未达",
-  "development_report": "docs/QUALITY.md",
+  "development_status": "0.15.1 / build 37 公测候选；最终样片验收进行中，尚不能作为商用终版",
+  "development_report": "docs/ASSESSMENT-0.15.1.md",
   "operation_model": "docs/USER-GUIDE.md",
   "release_url": null
 }

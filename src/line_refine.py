@@ -4,6 +4,16 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from threading import BoundedSemaphore
 
+def is_missing_line(candidate,text):
+    """An old spelling of an existing line is not an additional missing line.
+
+    In particular, a rejected trailing scene mark must not be appended again
+    after full-caption verification has already removed it.
+    """
+    import subtitle_ocr as core
+    existing=[core.key(line) for line in text.splitlines() if core.key(line)]
+    return candidate not in core.key(text) and not any(line in candidate for line in existing)
+
 def confidence_tracks(rows):
     """Track already-read individual lines through confidence dips, not blanks."""
     import subtitle_ocr as core
@@ -29,7 +39,7 @@ def confidence_tracks(rows):
         active=current
     return [track for track in tracks if len(track['items'])>=5 and
             sum(line['candidates'][0]['confidence']>=.5 for _,line in track['items'])>=3 and
-            any(track['text'] not in core.key(rows[i]['text']) for i,_ in track['items'])]
+            any(is_missing_line(track['text'],rows[i]['text']) for i,_ in track['items'])]
 
 
 def restore_low_confidence_lines(rows,path,meta,roi):
@@ -57,7 +67,7 @@ def restore_low_confidence_lines(rows,path,meta,roi):
     needed={};recovered=0
     for track in tracks:
         anchors=[i for i,line in track['items'] if line['candidates'][0]['confidence']>=.5]
-        suspects=[(i,line) for i,line in track['items'] if i in eligible and track['text'] not in core.key(rows[i]['text'])]
+        suspects=[(i,line) for i,line in track['items'] if i in eligible and is_missing_line(track['text'],rows[i]['text'])]
         if not suspects:continue
         references={i:sorted(anchors,key=lambda a:abs(a-i))[:2] for i,_ in suspects}
         boxes=[line['box'] for _,line in track['items']]

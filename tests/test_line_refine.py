@@ -92,6 +92,16 @@ class MissingLineTests(unittest.TestCase):
             self.assertEqual(restore_low_confidence_lines(rows,'unused',{},(0,0,1,1)),0)
         self.assertEqual(rows[3]['text'],'Already verified\nLower line')
 
+    def test_rejected_same_line_suffix_is_not_restored_as_a_missing_line(self):
+        for suffix in (' •','!',' 7',' extra'):
+            rows=rows_for(top='Upper line'+suffix,missing_confidence=.3)
+            rows[3].update(text='Upper line\nLower line',image_verified=True)
+            self.assertEqual(confidence_tracks(rows),[])
+            with patch('av.open') as opened:
+                self.assertEqual(restore_low_confidence_lines(rows,'unused',{},(0,0,1,1)),0)
+                opened.assert_not_called()
+            self.assertEqual(rows[3]['text'],'Upper line\nLower line')
+
     def test_real_blank_breaks_caption_track(self):
         rows=rows_for();rows[2].update(text='',ocr={'lines':[]})
         rows[4].update(text='',ocr={'lines':[]})
